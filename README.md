@@ -3,10 +3,10 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** On Linux, `tl.run()` opens a **real window**, runs the
-> engine-owned loop with frame timing, and draws named image objects into it.
-> A Windows backend exists but is **not yet verified on Windows**. Input,
-> sound, collision and animation are not implemented yet.
+> **Status: pre-alpha.** On Linux, `tl.run()` opens a **real window**, draws
+> named image objects into it, moves them, destroys them, and waits for
+> keyboard input. A Windows backend exists but is **not yet verified on
+> Windows**. Mouse, sound, collision and animation are not implemented yet.
 
 ## Philosophy
 
@@ -50,6 +50,8 @@ trjoludus/
     app.py             application and the engine-owned game loop
     game.py            Game base class
     create.py          creating persistent game objects
+    keyboard.py        waiting for key presses
+    input.py           what wait() can wait for
     scene.py           named game objects and the scene holding them
     image.py           images, and PNG decoding
     render.py          the frame buffer objects are composited into
@@ -100,6 +102,53 @@ tl.run(MyGame(), title="My Game", size=(800, 600))
 it every frame. Coordinates are pixels from the top-left corner of the window,
 and they position the image's top-left corner.
 
+On Linux that opens a real window. The engine owns the loop; a game supplies
+callbacks. Closing the window is a *request* -- a game that wants to honour it
+calls `quit()`, as above. TrjoLudus picks the backend for you, so a game never
+imports anything from `trjoludus.platform`. Runnable versions of all of this
+live in [`examples/`](examples/README.md):
+
+```sh
+python examples/image_test.py
+python examples/keyboard_test.py
+```
+
+### Keyboard input
+
+```python
+tl.keyboard.wait(tl.input.key)
+
+if tl.key == "W":
+    player.move.y(-50)
+if tl.key == "S":
+    player.move.y(50)
+```
+
+`wait` does not give you a value to store: it waits for a key press and updates
+`key`. Each press answers exactly one `wait`, so calling it twice waits twice --
+it never repeats the last key. Nothing else happens while waiting; no frame is
+drawn until a key arrives.
+
+Key names are uppercase and the same on every platform: `"W"` … `"Z"`, `"0"` …
+`"9"`, `"ESCAPE"`, `"ENTER"`, `"SPACE"`, `"UP"`, `"DOWN"`, `"LEFT"`, `"RIGHT"`.
+Keys outside that list are ignored rather than reported under a guessed name.
+
+> `key` is a live value, not a string. It compares, prints and formats like the
+> key name, which covers ordinary use. To keep a copy that will not change with
+> the next press, use `str(key)` or `key.value`.
+
+See [`examples/keyboard_test.py`](examples/keyboard_test.py).
+
+### Removing an object
+
+```python
+player.destroy()
+```
+
+The object stops being drawn and its name is free again. Every handle to it
+stops working, so nothing can go on moving something that no longer exists --
+using one says so rather than failing quietly. Destroying twice is an error.
+
 ### Placing and moving objects
 
 There are two ways to change where an object is, and they mean different
@@ -114,18 +163,6 @@ Assigning `x` or `y` sets an **absolute** position. `move.x` and `move.y`
 change it **relative** to wherever the object is now, so calls add up: two
 `move.x(50)` calls move it 100 pixels in total. Negative values move left and
 up. Nothing is clamped -- an object may be moved off screen.
-
-On Linux that opens a real window. The engine owns the loop; a game supplies
-callbacks. Closing the window is a *request* -- a game that wants to honour it
-calls `quit()`, as above.
-
-TrjoLudus picks the backend for you, so a game never imports anything from
-`trjoludus.platform`. A runnable version of the above is in
-[`examples/window_test.py`](examples/window_test.py):
-
-```sh
-python examples/window_test.py
-```
 
 ### Running without a window
 

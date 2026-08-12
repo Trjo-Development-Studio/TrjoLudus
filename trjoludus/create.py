@@ -17,7 +17,7 @@ not exist yet.
 from trjoludus.image import load_image
 from trjoludus.scene import SceneObject, current_scene
 
-__all__ = ["image", "remove"]
+__all__ = ["image"]
 
 
 def image(x: int, y: int, path, name: str):
@@ -56,12 +56,3 @@ def image(x: int, y: int, path, name: str):
     loaded = load_image(path)
     current_scene().add(SceneObject(name, loaded, x, y))
     return GameObject(name)
-
-
-def remove(name: str) -> None:
-    """Remove a named object so it is no longer drawn.
-
-    Raises:
-        SceneError: If no object has that name.
-    """
-    current_scene().remove(name)

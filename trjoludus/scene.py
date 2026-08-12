@@ -264,9 +264,9 @@ class GameObject:
         """
         if self._object.removed:
             raise SceneError(
-                f"The game object {self._object.name!r} has been removed and "
-                f"cannot be used any more. Create it again with "
-                f"create.image(...) if you still need it."
+                f"The game object {self._object.name!r} has been destroyed and "
+                f"cannot be used any more. If you need it again, create it "
+                f"with create.image(...); destroying is permanent."
             )
         return self._object
 
@@ -274,6 +274,23 @@ class GameObject:
     def move(self) -> Movement:
         """Relative movement: ``player.move.x(50)``."""
         return self._move
+
+    def destroy(self) -> None:
+        """Remove this object from the game for good.
+
+        It stops being drawn, its name becomes free again, and
+        ``GameObject(name)`` no longer finds it. Every handle to it -- not
+        just this one -- stops working, so nothing can go on moving something
+        that is gone.
+
+        Raises:
+            SceneError: If the object has already been destroyed. Destroying
+                twice is a mistake worth hearing about: the second call cannot
+                mean anything, and staying silent would hide the same
+                confusion in code that runs it in a loop.
+        """
+        obj = self._live()
+        current_scene().remove(obj.name)
 
     @property
     def name(self) -> str:

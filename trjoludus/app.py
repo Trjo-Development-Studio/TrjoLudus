@@ -25,14 +25,34 @@ so constructing an application never opens a display. On Linux that means a
 real X11 window; setting ``TRJOLUDUS_BACKEND=null`` runs headless instead.
 """
 
+from collections import deque
+from time import sleep
+
 from trjoludus.clock import DEFAULT_MAX_FPS, Clock
+from trjoludus.errors import TrjoLudusError
 from trjoludus.game import Game
 from trjoludus.platform import create_backend
 from trjoludus.platform.base import PlatformBackend
+from trjoludus.events import KeyPressed
 from trjoludus.render import Framebuffer
 from trjoludus.scene import current_scene
 
-__all__ = ["Application", "run"]
+__all__ = ["Application", "current_application", "run"]
+
+#: How long to pause between polls while waiting for a key, in seconds. Small
+#: enough to feel instant, large enough that waiting does not spin a CPU core.
+KEY_POLL_INTERVAL = 0.001
+
+_running: "Application | None" = None
+
+
+def current_application() -> "Application | None":
+    """The application currently running, or ``None``.
+
+    How :func:`trjoludus.keyboard.wait` reaches the loop it has to pump. Only
+    one game runs at a time, so one reference is enough.
+    """
+    return _running
 
 #: Title used when a game does not ask for one.
 DEFAULT_TITLE = "TrjoLudus"
@@ -97,6 +117,8 @@ class Application:
         self._size = _validate_size(size)
         self._clock = Clock(max_fps=max_fps)
         self._framebuffer = Framebuffer(*self._size)
+        self._keys: deque[str] = deque()
+        self._window = None
         # Deliberately not selected here: constructing an Application must not
         # open a display, so an unset backend is resolved when run() starts.
         self._backend = backend
@@ -143,18 +165,30 @@ class Application:
                 no X display is reachable. Nothing has been created at that
                 point, so there is nothing to clean up.
         """
+        global _running
+
         if self._backend is None:
             self._backend = create_backend()
 
         window = None
         started = False
+        previous, _running = _running, self
         try:
             width, height = self._size
             window = self._backend.create_window(self._title, width, height)
+            self._window = window
             self._game.on_start()
             started = True
             self._loop(window)
         finally:
+            from trjoludus.keyboard import key as _key
+
+            _running = previous
+            self._window = None
+            self._keys.clear()
+            # Unread input belonged to this run, and so did the last key. A
+            # second game must not start out holding the first one's press.
+            _key._set(None)
             try:
                 if started:
                     self._game.on_stop()
@@ -183,14 +217,54 @@ class Application:
             # The whole batch is delivered even if a handler calls quit():
             # these events already happened, and dropping some of them would
             # make delivery depend on where in the batch quit() landed.
-            for event in window.poll_events():
-                game.on_event(event)
+            self._deliver(window.poll_events())
 
             if game.quit_requested:
                 break
 
             game.on_update(self._clock.tick())
             self._render(window)
+
+    def _deliver(self, events) -> None:
+        """Route one batch of events.
+
+        Key presses go into a queue for :func:`trjoludus.keyboard.wait` rather
+        than to ``on_event``. Delivering them to both would show a game the
+        same press twice and leave it unclear which one owned it.
+        """
+        for event in events:
+            if isinstance(event, KeyPressed):
+                self._keys.append(event.key)
+            else:
+                self._game.on_event(event)
+
+    def _wait_for_key(self) -> str | None:
+        """Block until a key press is available, and return its name.
+
+        Presses are queued and handed out oldest first, each returned exactly
+        once. A press that arrived earlier and has not been answered yet is
+        returned immediately -- that is a new event, not a repeat of the last
+        one.
+
+        Pumps the same window and delivers non-key events the same way the
+        main loop does, so a close request still reaches the game while a wait
+        is in progress. If the game responds by quitting, this returns
+        ``None`` rather than waiting for a key that may never come.
+        """
+        if self._window is None:  # pragma: no cover -- run() sets it
+            raise TrjoLudusError("keyboard.wait() needs a running game.")
+
+        while True:
+            if self._keys:
+                return self._keys.popleft()
+            if self._game.quit_requested:
+                return None
+            self._deliver(self._window.poll_events())
+            if self._keys or self._game.quit_requested:
+                continue
+            # Nothing arrived. Pause briefly rather than spin: this is pacing,
+            # not a wait for something that has already happened.
+            sleep(KEY_POLL_INTERVAL)
 
     def _render(self, window) -> None:
         """Draw the scene and hand the finished frame to the backend.

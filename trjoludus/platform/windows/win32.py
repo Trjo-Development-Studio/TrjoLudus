@@ -23,7 +23,12 @@ import sys
 from collections.abc import Iterable
 
 from trjoludus.errors import PlatformError
-from trjoludus.events import Event, WindowCloseRequested, WindowResized
+from trjoludus.events import (
+    Event,
+    KeyPressed,
+    WindowCloseRequested,
+    WindowResized,
+)
 from trjoludus.platform.base import PlatformBackend, PlatformWindow
 from trjoludus.platform.windows import _user32
 
@@ -39,6 +44,36 @@ _class_counter = itertools.count()
 
 def _last_error_message(action: str) -> str:
     return f"{action} failed (Win32 error {ctypes.get_last_error()})."
+
+
+#: Virtual-key codes that are not simply a character, as canonical names.
+_NAMED_VIRTUAL_KEYS = {
+    _user32.VK_ESCAPE: "ESCAPE",
+    _user32.VK_RETURN: "ENTER",
+    _user32.VK_SPACE: "SPACE",
+    _user32.VK_UP: "UP",
+    _user32.VK_DOWN: "DOWN",
+    _user32.VK_LEFT: "LEFT",
+    _user32.VK_RIGHT: "RIGHT",
+}
+
+
+def key_name(virtual_key: int) -> str | None:
+    """Translate a Win32 virtual-key code into a canonical key name.
+
+    Returns ``None`` for keys TrjoLudus has no name for, so they are ignored
+    rather than reported under a guessed name.
+    """
+    named = _NAMED_VIRTUAL_KEYS.get(virtual_key)
+    if named is not None:
+        return named
+    # Letter and digit virtual-key codes are the ASCII code of the uppercase
+    # character, which is already the canonical name.
+    if 0x41 <= virtual_key <= 0x5A:  # A-Z
+        return chr(virtual_key)
+    if 0x30 <= virtual_key <= 0x39:  # 0-9
+        return chr(virtual_key)
+    return None
 
 
 def loword(value: int) -> int:
@@ -365,6 +400,14 @@ class Win32Backend(PlatformBackend):
                         window._size = size
                         window._pending.append(WindowResized(size[0], size[1]))
                 return 0
+
+            if message in (_user32.WM_KEYDOWN, _user32.WM_SYSKEYDOWN):
+                name = key_name(wparam)
+                if name is not None:
+                    window._pending.append(KeyPressed(name))
+                # Still forwarded: DefWindowProcW turns key messages into
+                # system behaviour such as Alt opening the window menu.
+                return self._user32.DefWindowProcW(hwnd, message, wparam, lparam)
 
             if message == _user32.WM_DESTROY:
                 # The window is already gone; close() must not ask again.

@@ -171,6 +171,19 @@ WM_DESTROY = 0x0002
 WM_SIZE = 0x0005
 WM_CLOSE = 0x0010
 
+#: Key went down. Virtual-key code arrives in wParam.
+WM_KEYDOWN = 0x0100
+WM_SYSKEYDOWN = 0x0104
+
+#: Virtual-key codes that are not simply a character (WinUser.h).
+VK_RETURN = 0x0D
+VK_ESCAPE = 0x1B
+VK_SPACE = 0x20
+VK_LEFT = 0x25
+VK_UP = 0x26
+VK_RIGHT = 0x27
+VK_DOWN = 0x28
+
 #: wParam of WM_SIZE when the window was minimised. Its client size is 0x0,
 #: which is not a meaningful resize.
 SIZE_MINIMIZED = 1

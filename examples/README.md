@@ -59,16 +59,17 @@ the last.
 
 | File | What it is |
 | --- | --- |
-| `window_test.py` | Opens a real window with `tl.run()`. Engine smoke test, and the seed of the first lesson. |
+| `window_test.py` | Opens a real window with `tl.run()`. |
+| `image_test.py` | Creates a named image object and moves it. |
+| `keyboard_test.py` | Moves an object with W/A/S/D, quits on Escape. |
+| `assets/` | Images the examples use. |
 
-`window_test.py` now uses **only the public API** -- backend selection landed,
-so `tl.run()` opens a window on its own and nothing imports
-`trjoludus.platform`. It therefore no longer breaks the rule above, and is
-close to what a real first lesson will look like.
+All of these use **only the public API**: `tl.run()` picks the backend itself
+and nothing imports `trjoludus.platform`, so they obey the rule above.
 
-It is still catalogued as a smoke test rather than "Lesson 1", because a
-lesson needs explanation written for a beginner, not just working code. Turning
-it into one is tutorial work, not engine work.
+They are still catalogued as smoke tests rather than "Lesson 1", "Lesson 2" and
+so on, because a lesson needs explanation written for a beginner, not just
+working code. Turning them into lessons is tutorial work, not engine work.
 
 ## Planned progression
 

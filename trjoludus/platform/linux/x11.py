@@ -22,7 +22,12 @@ from collections import deque
 from collections.abc import Iterable
 
 from trjoludus.errors import PlatformError
-from trjoludus.events import Event, WindowCloseRequested, WindowResized
+from trjoludus.events import (
+    Event,
+    KeyPressed,
+    WindowCloseRequested,
+    WindowResized,
+)
 from trjoludus.platform.base import PlatformBackend, PlatformWindow
 from trjoludus.platform.linux import _xlib
 
@@ -72,6 +77,37 @@ def encode_legacy_title(title: str) -> bytes:
     do; the full text is always available in ``_NET_WM_NAME``.
     """
     return title.encode("latin-1", errors="replace")
+
+
+#: Keysyms that are not simply a character, mapped to canonical key names.
+#: Index 0 of the keycode is used, so these are the unshifted meanings.
+_NAMED_KEYSYMS = {
+    0xFF1B: "ESCAPE",
+    0xFF0D: "ENTER",
+    0xFF8D: "ENTER",  # keypad Enter
+    0x0020: "SPACE",
+    0xFF52: "UP",
+    0xFF54: "DOWN",
+    0xFF51: "LEFT",
+    0xFF53: "RIGHT",
+}
+
+
+def key_name(keysym: int) -> str | None:
+    """Translate an X keysym into a canonical TrjoLudus key name.
+
+    Returns ``None`` for keys TrjoLudus has no name for, so they are ignored
+    rather than reported under a guessed name.
+    """
+    named = _NAMED_KEYSYMS.get(keysym)
+    if named is not None:
+        return named
+    # Latin letters and digits are their own ASCII codepoint as keysyms.
+    if 0x61 <= keysym <= 0x7A:  # a-z
+        return chr(keysym).upper()
+    if 0x30 <= keysym <= 0x39:  # 0-9
+        return chr(keysym)
+    return None
 
 
 def _install_error_handlers(xlib) -> None:
@@ -282,7 +318,11 @@ class X11Backend(PlatformBackend):
         protocols = (_xlib.Atom * 1)(self._wm_delete_window)
         xlib.XSetWMProtocols(self._display, window_id, protocols, 1)
 
-        xlib.XSelectInput(self._display, window_id, _xlib.STRUCTURE_NOTIFY_MASK)
+        xlib.XSelectInput(
+            self._display,
+            window_id,
+            _xlib.STRUCTURE_NOTIFY_MASK | _xlib.KEY_PRESS_MASK,
+        )
         self._apply_title(window_id, title)
         xlib.XMapWindow(self._display, window_id)
         xlib.XFlush(self._display)
@@ -468,6 +508,18 @@ class X11Backend(PlatformBackend):
             if size != window._size:
                 window._size = size
                 window._pending.append(WindowResized(size[0], size[1]))
+
+        elif event_type == _xlib.KEY_PRESS:
+            window = self._windows.get(event.xkey.window)
+            if window is None:
+                return
+            # A keycode is hardware-specific; the keysym is what has meaning.
+            # Index 0 is the unshifted interpretation, so "w" and shift+"w"
+            # both report "W".
+            keysym = self._xlib.XLookupKeysym(ctypes.byref(event.xkey), 0)
+            name = key_name(keysym)
+            if name is not None:
+                window._pending.append(KeyPressed(name))
 
         elif event_type == _xlib.DESTROY_NOTIFY:
             window = self._windows.get(event.xdestroywindow.window)

@@ -22,7 +22,7 @@ from unittest import mock
 
 from trjoludus.app import Application
 from trjoludus.errors import PlatformError
-from trjoludus.events import WindowCloseRequested, WindowResized
+from trjoludus.events import KEY_NAMES, WindowCloseRequested, WindowResized
 from trjoludus.game import Game
 from trjoludus.platform.base import PlatformBackend, PlatformWindow
 from trjoludus.platform.linux import _xlib
@@ -32,6 +32,7 @@ from trjoludus.platform.linux.x11 import (
     X11Window,
     encode_legacy_title,
     encode_utf8_title,
+    key_name,
 )
 
 #: How long an integration test waits for the server to deliver an event.
@@ -133,16 +134,56 @@ class TestDeclarations(unittest.TestCase):
     def test_structure_notify_mask(self):
         self.assertEqual(_xlib.STRUCTURE_NOTIFY_MASK, 1 << 17)
 
-    def test_no_input_masks_are_declared(self):
-        """Keyboard and mouse belong to Milestone 2."""
+    def test_keyboard_constants(self):
+        self.assertEqual(_xlib.KEY_PRESS, 2)
+        self.assertEqual(_xlib.KEY_PRESS_MASK, 1 << 0)
+
+    def test_no_mouse_masks_are_declared(self):
+        """Mouse input is still a later milestone."""
         for name in dir(_xlib):
-            self.assertNotIn("KEY_PRESS", name)
             self.assertNotIn("BUTTON_PRESS", name)
+            self.assertNotIn("POINTER_MOTION", name)
 
     def test_xid_types_are_unsigned_long(self):
         for name in ("XID", "Window", "Atom"):
             with self.subTest(type=name):
                 self.assertIs(getattr(_xlib, name), ctypes.c_ulong)
+
+
+class TestKeysymTranslation(unittest.TestCase):
+    """Keysym to canonical name. Pure, so it runs without a display."""
+
+    def test_letters_become_uppercase(self):
+        self.assertEqual(key_name(0x77), "W")   # XK_w
+        self.assertEqual(key_name(0x61), "A")   # XK_a
+        self.assertEqual(key_name(0x73), "S")
+        self.assertEqual(key_name(0x64), "D")
+
+    def test_digits(self):
+        self.assertEqual(key_name(0x30), "0")
+        self.assertEqual(key_name(0x39), "9")
+
+    def test_named_keys(self):
+        self.assertEqual(key_name(0xFF1B), "ESCAPE")
+        self.assertEqual(key_name(0xFF0D), "ENTER")
+        self.assertEqual(key_name(0x0020), "SPACE")
+        self.assertEqual(key_name(0xFF52), "UP")
+        self.assertEqual(key_name(0xFF54), "DOWN")
+        self.assertEqual(key_name(0xFF51), "LEFT")
+        self.assertEqual(key_name(0xFF53), "RIGHT")
+
+    def test_unknown_keysyms_are_ignored_rather_than_guessed(self):
+        for keysym in (0xFFE1, 0xFF67, 0x0000):
+            with self.subTest(keysym=hex(keysym)):
+                self.assertIsNone(key_name(keysym))
+
+    def test_every_name_produced_is_a_canonical_name(self):
+        """A backend must never invent a name the engine does not know."""
+        for keysym in list(range(0x20, 0x80)) + list(range(0xFF00, 0xFF60)):
+            name = key_name(keysym)
+            if name is not None:
+                with self.subTest(keysym=hex(keysym)):
+                    self.assertIn(name, KEY_NAMES)
 
 
 class TestTitleEncoding(unittest.TestCase):

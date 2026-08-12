@@ -25,7 +25,7 @@ from pathlib import Path
 
 import trjoludus
 from trjoludus.errors import PlatformError
-from trjoludus.events import WindowCloseRequested, WindowResized
+from trjoludus.events import KEY_NAMES, WindowCloseRequested, WindowResized
 from trjoludus.platform.base import PlatformBackend, PlatformWindow
 from trjoludus.platform.windows import _user32
 from trjoludus.platform.windows.win32 import (
@@ -33,6 +33,7 @@ from trjoludus.platform.windows.win32 import (
     Win32Backend,
     Win32Window,
     hiword,
+    key_name,
     loword,
 )
 
@@ -156,15 +157,65 @@ class TestDeclarations(unittest.TestCase):
         self.assertEqual(ctypes.c_int32(_user32.CW_USEDEFAULT).value,
                          _user32.CW_USEDEFAULT)
 
-    def test_no_input_messages_are_declared(self):
-        """Keyboard and mouse belong to Milestone 2."""
+    def test_keyboard_message_constants(self):
+        self.assertEqual(_user32.WM_KEYDOWN, 0x0100)
+        self.assertEqual(_user32.WM_SYSKEYDOWN, 0x0104)
+        self.assertEqual(_user32.VK_ESCAPE, 0x1B)
+        self.assertEqual(_user32.VK_RETURN, 0x0D)
+
+    def test_no_mouse_messages_are_declared(self):
+        """Mouse input is still a later milestone."""
         for name in dir(_user32):
-            self.assertNotIn("WM_KEY", name)
             self.assertNotIn("WM_MOUSE", name)
-            self.assertNotIn("WM_CHAR", name)
+            self.assertNotIn("WM_LBUTTON", name)
 
     def test_backend_name_constant(self):
         self.assertEqual(BACKEND_NAME, "win32")
+
+
+class TestVirtualKeyTranslation(unittest.TestCase):
+    """Virtual-key code to canonical name. Pure, so it runs on Linux."""
+
+    def test_letters(self):
+        self.assertEqual(key_name(0x57), "W")
+        self.assertEqual(key_name(0x41), "A")
+        self.assertEqual(key_name(0x53), "S")
+        self.assertEqual(key_name(0x44), "D")
+
+    def test_digits(self):
+        self.assertEqual(key_name(0x30), "0")
+        self.assertEqual(key_name(0x39), "9")
+
+    def test_named_keys(self):
+        self.assertEqual(key_name(_user32.VK_ESCAPE), "ESCAPE")
+        self.assertEqual(key_name(_user32.VK_RETURN), "ENTER")
+        self.assertEqual(key_name(_user32.VK_SPACE), "SPACE")
+        self.assertEqual(key_name(_user32.VK_UP), "UP")
+        self.assertEqual(key_name(_user32.VK_DOWN), "DOWN")
+        self.assertEqual(key_name(_user32.VK_LEFT), "LEFT")
+        self.assertEqual(key_name(_user32.VK_RIGHT), "RIGHT")
+
+    def test_unknown_codes_are_ignored_rather_than_guessed(self):
+        for code in (0x10, 0x11, 0x00):
+            with self.subTest(code=hex(code)):
+                self.assertIsNone(key_name(code))
+
+    def test_every_name_produced_is_a_canonical_name(self):
+        for code in range(0x100):
+            name = key_name(code)
+            if name is not None:
+                with self.subTest(code=hex(code)):
+                    self.assertIn(name, KEY_NAMES)
+
+    def test_both_backends_agree_on_the_names_they_produce(self):
+        """The same physical key must read the same on either platform."""
+        from trjoludus.platform.linux.x11 import key_name as x11_key_name
+
+        pairs = [(0x57, 0x77), (0x41, 0x61), (_user32.VK_ESCAPE, 0xFF1B),
+                 (_user32.VK_SPACE, 0x0020), (_user32.VK_UP, 0xFF52)]
+        for virtual_key, keysym in pairs:
+            with self.subTest(vk=hex(virtual_key)):
+                self.assertEqual(key_name(virtual_key), x11_key_name(keysym))
 
 
 class TestMessageParameterHelpers(unittest.TestCase):

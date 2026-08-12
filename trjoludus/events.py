@@ -16,9 +16,23 @@ from dataclasses import dataclass
 
 __all__ = [
     "Event",
+    "KEY_NAMES",
+    "KeyPressed",
     "WindowCloseRequested",
     "WindowResized",
 ]
+
+#: Every key TrjoLudus can currently name, as it is reported to a game.
+#:
+#: Names are uppercase and platform-independent: the same press gives ``"W"``
+#: on X11 and on Win32, so a game never sees a keysym or a virtual-key code.
+#: Letters and digits are their own character; everything else is spelled out.
+#: Keys outside this set are ignored rather than guessed at, and the set grows
+#: when a milestone needs more of it.
+KEY_NAMES = frozenset(
+    list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+    + ["ESCAPE", "ENTER", "SPACE", "UP", "DOWN", "LEFT", "RIGHT"]
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +52,17 @@ class WindowCloseRequested(Event):
     This is a *request*. The engine does not act on it by itself; a game
     decides whether to shut down, prompt to save, or ignore it entirely.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class KeyPressed(Event):
+    """A key went down.
+
+    Attributes:
+        key: One of :data:`KEY_NAMES`, e.g. ``"W"`` or ``"ESCAPE"``.
+    """
+
+    key: str
 
 
 @dataclass(frozen=True, slots=True)

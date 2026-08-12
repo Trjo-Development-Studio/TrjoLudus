@@ -306,7 +306,7 @@ class TestMovement(SceneTestCase):
             player.move.x(10)
         message = str(caught.exception)
         self.assertIn("player", message)
-        self.assertIn("removed", message)
+        self.assertIn("destroyed", message)
 
     def test_reading_a_removed_object_raises(self):
         player = self.player()
@@ -331,6 +331,97 @@ class TestMovement(SceneTestCase):
         self.assertEqual(new.x, 5)
         with self.assertRaises(SceneError):
             old.move.x(5)
+
+
+class TestDestroy(SceneTestCase):
+    """player.destroy() -- permanent removal from the game."""
+
+    def player(self, name="player", x=10, y=20):
+        current_scene().add(SceneObject(name, make_image(), x, y))
+        return GameObject(name)
+
+    def test_removes_the_object_from_the_scene(self):
+        self.player().destroy()
+        self.assertNotIn("player", current_scene())
+
+    def test_the_object_can_no_longer_be_found(self):
+        self.player().destroy()
+        with self.assertRaises(SceneError):
+            GameObject("player")
+
+    def test_the_name_becomes_available_again(self):
+        self.player().destroy()
+        current_scene().add(SceneObject("player", make_image(), 0, 0))
+        self.assertIn("player", current_scene())
+
+    def test_every_handle_becomes_invalid_not_just_the_one_used(self):
+        first = self.player()
+        second = GameObject("player")
+        first.destroy()
+        with self.assertRaises(SceneError):
+            second.x
+
+    def test_reading_position_after_destruction_raises(self):
+        player = self.player()
+        player.destroy()
+        for read in (lambda: player.x, lambda: player.y,
+                     lambda: player.position, lambda: player.size,
+                     lambda: player.visible):
+            with self.subTest(), self.assertRaises(SceneError):
+                read()
+
+    def test_moving_after_destruction_raises(self):
+        player = self.player()
+        player.destroy()
+        with self.assertRaises(SceneError):
+            player.move.x(50)
+        with self.assertRaises(SceneError):
+            player.move.y(50)
+
+    def test_the_error_explains_what_happened_and_what_to_do(self):
+        player = self.player()
+        player.destroy()
+        with self.assertRaises(SceneError) as caught:
+            player.move.x(1)
+        message = str(caught.exception)
+        self.assertIn("player", message)
+        self.assertIn("destroyed", message)
+        self.assertIn("create.image", message)
+
+    def test_destroying_twice_raises(self):
+        """The second call cannot mean anything, so it says so."""
+        player = self.player()
+        player.destroy()
+        with self.assertRaises(SceneError) as caught:
+            player.destroy()
+        self.assertIn("destroyed", str(caught.exception))
+
+    def test_destroying_twice_does_not_corrupt_the_scene(self):
+        other = self.player("zombie")
+        player = self.player()
+        player.destroy()
+        with self.assertRaises(SceneError):
+            player.destroy()
+        self.assertEqual(current_scene().names, ("zombie",))
+        self.assertEqual(other.name, "zombie")
+
+    def test_destroying_one_object_leaves_the_others_alone(self):
+        player = self.player("player")
+        zombie = self.player("zombie", 5, 5)
+        player.destroy()
+        self.assertEqual(zombie.position, (5, 5))
+        zombie.move.x(1)
+        self.assertEqual(zombie.x, 6)
+
+    def test_a_destroyed_object_is_not_silently_recreated(self):
+        player = self.player()
+        player.destroy()
+        with self.assertRaises(SceneError):
+            player.move.x(1)
+        self.assertEqual(len(current_scene()), 0)
+
+    def test_destroy_is_the_only_way_to_remove_an_object(self):
+        self.assertTrue(hasattr(GameObject, "destroy"))
 
 
 class TestCreateImage(SceneTestCase):
@@ -393,16 +484,18 @@ class TestCreateImage(SceneTestCase):
         with self.assertRaises(TypeError):
             create.image(1.5, 0, self.sprite, "player")
 
-    def test_remove(self):
-        create.image(0, 0, self.sprite, "player")
-        create.remove("player")
+    def test_destroy(self):
+        create.image(0, 0, self.sprite, "player").destroy()
         self.assertNotIn("player", current_scene())
 
-    def test_removing_frees_the_name(self):
-        create.image(0, 0, self.sprite, "player")
-        create.remove("player")
+    def test_destroying_frees_the_name(self):
+        create.image(0, 0, self.sprite, "player").destroy()
         create.image(5, 5, self.sprite, "player")  # must not raise
         self.assertEqual(GameObject("player").position, (5, 5))
+
+    def test_create_offers_no_competing_removal(self):
+        """destroy() is the one way to remove an object."""
+        self.assertFalse(hasattr(create, "remove"))
 
     def test_create_is_exposed_publicly(self):
         self.assertIs(trjoludus.create, create)

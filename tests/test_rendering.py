@@ -433,6 +433,69 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
             for y in (0, 1):
                 self.assertEqual(self.pixel(window, x, y), (50, 100, 200, 255))
 
+    def test_a_destroyed_object_is_not_drawn(self):
+        path = _sprite(self, 2, 2, (200, 100, 50))
+        red, green, blue = DEFAULT_CLEAR_COLOUR
+
+        def start():
+            import trjoludus as tl
+
+            tl.create.image(0, 0, path, "player").destroy()
+
+        window = self.run_game(start)
+        self.assertEqual(self.pixel(window, 0, 0), (blue, green, red, 255))
+
+    def test_destroying_after_a_frame_removes_it_from_later_frames(self):
+        """Destruction during play must not corrupt or stall rendering."""
+        path = _sprite(self, 2, 2, (200, 100, 50))
+        red, green, blue = DEFAULT_CLEAR_COLOUR
+
+        import trjoludus as tl
+        from trjoludus.platform.null import NullBackend
+
+        windows = []
+
+        class Backend(NullBackend):
+            def create_window(self, title, width, height):
+                window = super().create_window(title, width, height)
+                windows.append(window)
+                return window
+
+        class G(tl.Game):
+            frames = 0
+
+            def on_start(self):
+                tl.create.image(0, 0, path, "player")
+
+            def on_update(self, dt):
+                self.frames += 1
+                if self.frames == 2:
+                    tl.GameObject("player").destroy()
+                if self.frames >= 4:
+                    self.quit()
+
+        tl.Application(G(), size=(16, 12), max_fps=None,
+                       backend=Backend()).run()
+        window = windows[0]
+        self.assertEqual(window.frames_presented, 4)
+        self.assertEqual(self.pixel(window, 0, 0), (blue, green, red, 255))
+
+    def test_destroying_one_object_leaves_another_drawn(self):
+        gone = _sprite(self, 2, 2, (200, 100, 50))
+        kept = _sprite(self, 2, 2, (10, 20, 30))
+
+        def start():
+            import trjoludus as tl
+
+            tl.create.image(0, 0, gone, "gone")
+            tl.create.image(4, 0, kept, "kept")
+            tl.GameObject("gone").destroy()
+
+        window = self.run_game(start)
+        red, green, blue = DEFAULT_CLEAR_COLOUR
+        self.assertEqual(self.pixel(window, 0, 0), (blue, green, red, 255))
+        self.assertEqual(self.pixel(window, 4, 0), (30, 20, 10, 255))
+
     def test_the_scene_is_cleared_when_a_run_finishes(self):
         """A second run must not inherit the first game's objects."""
         from trjoludus.scene import current_scene

@@ -63,13 +63,17 @@ Bool = c_int
 # --- X protocol constants ------------------------------------------------
 
 #: Event type codes (X11/X.h).
+KEY_PRESS = 2
 DESTROY_NOTIFY = 17
 CONFIGURE_NOTIFY = 22
 CLIENT_MESSAGE = 33
 
-#: Event mask selecting ConfigureNotify and DestroyNotify. Nothing else is
-#: selected: keyboard and mouse masks belong to Milestone 2.
+#: Event mask selecting ConfigureNotify and DestroyNotify.
 STRUCTURE_NOTIFY_MASK = 1 << 17
+
+#: Event mask selecting KeyPress. Key *releases* are not selected: nothing
+#: reports them yet, and asking for events no one reads only costs round trips.
+KEY_PRESS_MASK = 1 << 0
 
 #: XChangeProperty mode.
 PROP_MODE_REPLACE = 0
@@ -131,6 +135,28 @@ class XConfigureEvent(Structure):
         ("border_width", c_int),
         ("above", Window),
         ("override_redirect", Bool),
+    ]
+
+
+class XKeyEvent(Structure):
+    """A KeyPress. ``keycode`` is hardware-specific and must be looked up."""
+
+    _fields_ = [
+        ("type", c_int),
+        ("serial", c_ulong),
+        ("send_event", Bool),
+        ("display", Display),
+        ("window", Window),
+        ("root", Window),
+        ("subwindow", Window),
+        ("time", c_ulong),
+        ("x", c_int),
+        ("y", c_int),
+        ("x_root", c_int),
+        ("y_root", c_int),
+        ("state", c_uint),
+        ("keycode", c_uint),
+        ("same_screen", Bool),
     ]
 
 
@@ -224,6 +250,7 @@ class XEvent(Union):
         ("type", c_int),
         ("xclient", XClientMessageEvent),
         ("xconfigure", XConfigureEvent),
+        ("xkey", XKeyEvent),
         ("xdestroywindow", XDestroyWindowEvent),
         ("pad", c_long * 24),
     ]
@@ -279,6 +306,10 @@ FUNCTION_SIGNATURES: dict[str, tuple[list, object]] = {
         c_int,
     ),
     "XDestroyImage": ([POINTER(XImage)], c_int),
+    # Keyboard. A keycode is hardware-specific, so it is translated to a
+    # keysym; index 0 is the unshifted meaning, which is what a canonical
+    # key name should be.
+    "XLookupKeysym": ([POINTER(XKeyEvent), c_int], c_ulong),
     # Events.
     "XSelectInput": ([Display, Window, c_long], c_int),
     "XPending": ([Display], c_int),
