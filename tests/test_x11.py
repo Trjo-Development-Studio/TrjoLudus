@@ -425,12 +425,26 @@ class TestTitlePropertiesOnServer(unittest.TestCase):
         self.backend = X11Backend()
         self.addCleanup(self.backend.shutdown)
 
-    def read_property(self, window, name):
-        result = subprocess.run(
-            ["xprop", "-id", str(window.window_id), name],
-            capture_output=True, text=True, timeout=30,
-        )
-        return result.stdout.strip()
+    def read_property(self, window, name, timeout=EVENT_TIMEOUT):
+        """Read a property, waiting for the server to have processed it.
+
+        The backend uses XFlush, which pushes the request but does not wait
+        for the server to act on it, and xprop reads over its own connection.
+        Reading once therefore races: the property can legitimately not exist
+        yet. Retrying until it appears tests the value rather than the timing.
+        """
+        deadline = time.monotonic() + timeout
+        last = ""
+        while time.monotonic() < deadline:
+            result = subprocess.run(
+                ["xprop", "-id", str(window.window_id), name],
+                capture_output=True, text=True, timeout=30,
+            )
+            last = result.stdout.strip()
+            if "=" in last:
+                return last
+            time.sleep(0.05)
+        return last
 
     def test_net_wm_name_holds_the_exact_utf8_title(self):
         window = self.backend.create_window(self.NON_ASCII_TITLE, 200, 150)

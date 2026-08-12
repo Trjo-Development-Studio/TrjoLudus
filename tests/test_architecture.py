@@ -86,6 +86,11 @@ class TestArchitecturalRules(unittest.TestCase):
         self.assertNotIn("ctypes", imported_module_names(tree))
         self.assertEqual(os_probe_attributes(tree), set())
 
+    def test_win32_backend_is_confined_to_the_platform_layer(self):
+        """Win32 declarations live under platform/ like every other backend."""
+        self.assertTrue((PLATFORM_ROOT / "windows" / "_user32.py").exists())
+        self.assertTrue((PLATFORM_ROOT / "windows" / "win32.py").exists())
+
     def test_null_backend_is_platform_neutral(self):
         """The null backend lives under platform/ but must touch no OS."""
         tree = ast.parse((PLATFORM_ROOT / "null.py").read_text(encoding="utf-8"))
@@ -98,13 +103,37 @@ class TestArchitecturalRules(unittest.TestCase):
         allowed = set(sys.stdlib_module_names) | {"trjoludus"}
         self.assertEqual(imported_module_names(tree) - allowed, set())
 
-    def test_linux_backend_imports_only_stdlib_and_trjoludus(self):
-        """The X11 backend must add no third-party dependency either."""
+    def test_backends_import_only_stdlib_and_trjoludus(self):
+        """No backend may add a third-party dependency."""
         allowed = set(sys.stdlib_module_names) | {"trjoludus"}
-        for path in sorted((PLATFORM_ROOT / "linux").rglob("*.py")):
-            with self.subTest(module=path.name):
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-                self.assertEqual(imported_module_names(tree) - allowed, set())
+        for subpackage in ("linux", "windows"):
+            for path in sorted((PLATFORM_ROOT / subpackage).rglob("*.py")):
+                with self.subTest(module=f"{subpackage}/{path.name}"):
+                    tree = ast.parse(path.read_text(encoding="utf-8"))
+                    self.assertEqual(imported_module_names(tree) - allowed, set())
+
+    def test_raw_declaration_modules_hold_no_backend_behaviour(self):
+        """_xlib.py and _user32.py declare; the backends decide.
+
+        Checked structurally: a declaration module defines types, constants
+        and prototypes, so it should contain no classes beyond ctypes
+        Structure/Union subclasses.
+        """
+        for relative in ("linux/_xlib.py", "windows/_user32.py"):
+            path = PLATFORM_ROOT / relative
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    bases = {
+                        base.id if isinstance(base, ast.Name) else
+                        getattr(base, "attr", "")
+                        for base in node.bases
+                    }
+                    with self.subTest(module=relative, cls=node.name):
+                        self.assertTrue(
+                            bases & {"Structure", "Union"},
+                            f"{node.name} is not a ctypes structure",
+                        )
 
     def test_importing_trjoludus_does_not_load_a_real_backend(self):
         """Importing the engine must not open a display or load Xlib."""

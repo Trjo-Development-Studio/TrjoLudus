@@ -32,7 +32,7 @@ class TestResolution(unittest.TestCase):
         self.assertEqual(BACKEND_ENV_VAR, "TRJOLUDUS_BACKEND")
 
     def test_known_backend_names(self):
-        self.assertEqual(set(BACKEND_NAMES), {"x11", "null"})
+        self.assertEqual(set(BACKEND_NAMES), {"x11", "win32", "null"})
 
     def test_linux_defaults_to_x11(self):
         with without_override(), mock.patch(
@@ -41,17 +41,28 @@ class TestResolution(unittest.TestCase):
         ):
             self.assertEqual(resolve_backend_name(), "x11")
 
-    def test_windows_has_no_backend_yet(self):
-        """Better a clear error than a guess that fails further from the cause."""
+    def test_windows_defaults_to_win32(self):
+        """Superseded Step 5 behaviour: Windows now has a backend."""
         with without_override(), mock.patch(
             "trjoludus.platform.detect_platform",
             return_value=PlatformName.WINDOWS,
         ):
-            with self.assertRaises(PlatformError) as caught:
-                resolve_backend_name()
-        message = str(caught.exception)
-        self.assertIn("windows", message.lower())
-        self.assertIn(BACKEND_ENV_VAR, message)
+            self.assertEqual(resolve_backend_name(), "win32")
+
+    def test_windows_does_not_silently_fall_back_to_null(self):
+        """A headless fallback would look like success while showing nothing."""
+        with without_override(), mock.patch(
+            "trjoludus.platform.detect_platform",
+            return_value=PlatformName.WINDOWS,
+        ):
+            self.assertNotEqual(resolve_backend_name(), "null")
+
+    def test_every_supported_platform_has_a_default(self):
+        for platform in PlatformName:
+            with self.subTest(platform=platform), without_override(), mock.patch(
+                "trjoludus.platform.detect_platform", return_value=platform
+            ):
+                self.assertIn(resolve_backend_name(), BACKEND_NAMES)
 
     def test_unsupported_platform_propagates(self):
         with without_override(), mock.patch(

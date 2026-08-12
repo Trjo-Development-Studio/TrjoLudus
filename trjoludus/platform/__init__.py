@@ -33,7 +33,7 @@ __all__ = [
 BACKEND_ENV_VAR = "TRJOLUDUS_BACKEND"
 
 #: Every backend name that can be requested.
-BACKEND_NAMES = ("x11", "null")
+BACKEND_NAMES = ("x11", "win32", "null")
 
 
 class PlatformName(Enum):
@@ -61,10 +61,11 @@ def detect_platform() -> PlatformName:
     )
 
 
-#: The backend each platform uses when nothing overrides it. Windows is absent
-#: on purpose: its backend does not exist yet, and defaulting it to something
-#: else would fail further from the cause.
-_PLATFORM_DEFAULTS = {PlatformName.LINUX: "x11"}
+#: The backend each platform uses when nothing overrides it.
+_PLATFORM_DEFAULTS = {
+    PlatformName.LINUX: "x11",
+    PlatformName.WINDOWS: "win32",
+}
 
 
 def resolve_backend_name(name: str | None = None) -> str:
@@ -133,6 +134,11 @@ def create_backend(name: str | None = None):
         from trjoludus.platform.linux.x11 import X11Backend
 
         return X11Backend()
+
+    if resolved == "win32":
+        from trjoludus.platform.windows.win32 import Win32Backend
+
+        return Win32Backend()
 
     raise PlatformError(  # pragma: no cover -- resolve_backend_name guards this
         f"Backend {resolved!r} is named but not wired up."

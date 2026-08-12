@@ -5,8 +5,9 @@ written in Python and designed for Windows and Linux.
 
 > **Status: pre-alpha.** Milestone 1 is essentially complete on Linux:
 > `tl.run()` opens a **real window**, runs the engine-owned loop with frame
-> timing, delivers platform-neutral events and shuts down cleanly. The Windows
-> backend and all rendering are not implemented yet.
+> timing, delivers platform-neutral events and shuts down cleanly. A Windows
+> backend exists but is **not yet verified on Windows**. Rendering is not
+> implemented at all.
 
 ## Philosophy
 
@@ -59,6 +60,9 @@ trjoludus/
         linux/
             _xlib.py   raw Xlib ctypes declarations
             x11.py     X11 backend
+        windows/
+            _user32.py raw Win32 ctypes declarations
+            win32.py   Win32 backend
 examples/              runnable examples
 tests/                 stdlib unittest suite
 ```
@@ -113,12 +117,14 @@ TRJOLUDUS_BACKEND=null python examples/window_test.py
 
 | Value | Backend |
 | --- | --- |
-| unset | the platform default (`x11` on Linux) |
+| unset | the platform default (`x11` on Linux, `win32` on Windows) |
 | `x11` | real windows through Xlib/Xwayland |
+| `win32` | real windows through user32 |
 | `null` | headless; no window, no close events |
 
-> **Milestone 1 caveat.** Windows has no backend yet, so `tl.run()` there
-> raises a `PlatformError` telling you to set `TRJOLUDUS_BACKEND=null`.
+> **Milestone 1 caveat.** The Windows backend is implemented but has not been
+> run on Windows yet -- TrjoLudus is developed on Linux. Treat it as untested
+> until someone exercises it on a real Windows machine.
 
 ## Learning TrjoLudus
 
