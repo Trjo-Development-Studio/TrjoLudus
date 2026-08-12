@@ -3,10 +3,10 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** Milestone 1 is in progress. TrjoLudus opens **real
-> windows on Linux** through Xlib, with an engine-owned loop, frame timing and
-> platform-neutral events. The Windows backend and all rendering are not
-> implemented yet.
+> **Status: pre-alpha.** Milestone 1 is essentially complete on Linux:
+> `tl.run()` opens a **real window**, runs the engine-owned loop with frame
+> timing, delivers platform-neutral events and shuts down cleanly. The Windows
+> backend and all rendering are not implemented yet.
 
 ## Philosophy
 
@@ -90,27 +90,35 @@ class MyGame(tl.Game):
 tl.run(MyGame(), title="My Game", size=(800, 600))
 ```
 
-The engine owns the loop; a game supplies callbacks. Closing the window is a
-*request* -- a game that wants to honour it calls `quit()`, as above.
+On Linux that opens a real window. The engine owns the loop; a game supplies
+callbacks. Closing the window is a *request* -- a game that wants to honour it
+calls `quit()`, as above.
 
-> **Milestone 1 caveat.** `run()` still uses the headless null backend, so no
-> window appears and no close event ever arrives. Automatic backend selection
-> is not implemented yet.
-
-To open a real window on Linux, pass the X11 backend explicitly:
-
-```python
-from trjoludus.platform.linux import X11Backend
-
-tl.Application(MyGame(), title="My Game", size=(800, 600),
-               backend=X11Backend()).run()
-```
-
-A runnable version of that is in [`examples/window_test.py`](examples/window_test.py):
+TrjoLudus picks the backend for you, so a game never imports anything from
+`trjoludus.platform`. A runnable version of the above is in
+[`examples/window_test.py`](examples/window_test.py):
 
 ```sh
 python examples/window_test.py
 ```
+
+### Running without a window
+
+Set `TRJOLUDUS_BACKEND=null` to run the same game headless -- useful for tests,
+CI, and machines with no display:
+
+```sh
+TRJOLUDUS_BACKEND=null python examples/window_test.py
+```
+
+| Value | Backend |
+| --- | --- |
+| unset | the platform default (`x11` on Linux) |
+| `x11` | real windows through Xlib/Xwayland |
+| `null` | headless; no window, no close events |
+
+> **Milestone 1 caveat.** Windows has no backend yet, so `tl.run()` there
+> raises a `PlatformError` telling you to set `TRJOLUDUS_BACKEND=null`.
 
 ## Learning TrjoLudus
 

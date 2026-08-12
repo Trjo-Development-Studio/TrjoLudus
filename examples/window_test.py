@@ -1,17 +1,15 @@
-"""The first real TrjoLudus window.
+"""The first real TrjoLudus window, using nothing but the public API.
 
-Opens an X11 window and runs the engine loop until you close it. Run it from
-the repository root:
+Run it from anywhere:
 
     python examples/window_test.py
 
-Closing the window is a *request*: the backend reports it, and the game below
-decides to honour it by calling ``quit()``. That is why ``on_event`` is not
-optional here -- without it the window would refuse to close.
+TrjoLudus picks the backend for you -- on Linux that is X11. Set
+``TRJOLUDUS_BACKEND=null`` to run the same game headless, with no window.
 
-``tl.run()`` still defaults to the headless null backend, so the X11 backend is
-passed in explicitly through ``Application``. Choosing a backend automatically
-per platform is a later step.
+Closing the window is a *request*: the engine reports it and the game decides.
+That is why ``on_event`` matters here -- without it, the close button would do
+nothing.
 """
 
 import sys
@@ -22,12 +20,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import trjoludus as tl  # noqa: E402
-from trjoludus.platform.linux import X11Backend  # noqa: E402
 
 
 class WindowTest(tl.Game):
     def on_start(self):
         self.elapsed = 0.0
+        self.frames = 0
         print("Window open. Close it to quit.")
 
     def on_event(self, event):
@@ -39,15 +37,15 @@ class WindowTest(tl.Game):
 
     def on_update(self, dt):
         self.elapsed += dt
+        self.frames += 1
 
     def on_stop(self):
-        print(f"Ran for {self.elapsed:.1f}s. Goodbye.")
+        average = self.elapsed / self.frames if self.frames else 0.0
+        print(
+            f"Ran {self.frames} frames in {self.elapsed:.1f}s "
+            f"(average dt {average * 1000:.1f}ms). Goodbye."
+        )
 
 
 if __name__ == "__main__":
-    tl.Application(
-        WindowTest(),
-        title="TrjoLudus — X11 Test",
-        size=(800, 600),
-        backend=X11Backend(),
-    ).run()
+    tl.run(WindowTest(), title="TrjoLudus — X11 Test", size=(800, 600))

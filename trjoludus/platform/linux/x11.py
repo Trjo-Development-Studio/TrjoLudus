@@ -167,7 +167,8 @@ class X11Backend(PlatformBackend):
             raise PlatformError(
                 "Could not open an X11 display. TrjoLudus's Linux backend "
                 "connects through Xlib (via Xwayland on a Wayland session); "
-                "check that DISPLAY is set and the session is running."
+                "check that DISPLAY is set and the session is running. "
+                "To run without a window, set TRJOLUDUS_BACKEND=null."
             )
 
         self._screen = self._xlib.XDefaultScreen(self._display)

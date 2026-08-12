@@ -19,17 +19,16 @@ that reacts to it. That difference is not observable until there is a renderer,
 and this order matches the lifecycle documented in ARCHITECTURE.md, so it is
 what the engine does for now.
 
-**Backend.** Milestone 1 Step 3 always uses the headless
-:class:`~trjoludus.platform.null.NullBackend`. Choosing a real backend per
-platform is later work; until then a window is simulated and never delivers a
-close event on its own, so a game driven by :func:`run` must call
-:meth:`~trjoludus.game.Game.quit` to stop.
+**Backend.** The backend is chosen by
+:func:`trjoludus.platform.create_backend` when :meth:`Application.run` starts,
+so constructing an application never opens a display. On Linux that means a
+real X11 window; setting ``TRJOLUDUS_BACKEND=null`` runs headless instead.
 """
 
 from trjoludus.clock import DEFAULT_MAX_FPS, Clock
 from trjoludus.game import Game
+from trjoludus.platform import create_backend
 from trjoludus.platform.base import PlatformBackend
-from trjoludus.platform.null import NullBackend
 
 __all__ = ["Application", "run"]
 
@@ -70,9 +69,11 @@ class Application:
         size: ``(width, height)`` of the client area, in pixels.
         max_fps: Target frame rate, or ``None`` to run unpaced. Passed
             straight to :class:`~trjoludus.clock.Clock`, which validates it.
-        backend: Backend to run on. Internal: defaults to a fresh
-            :class:`~trjoludus.platform.null.NullBackend`, and exists so tests
-            can supply their own. Backend selection proper is later work.
+        backend: Backend to run on. Defaults to whatever
+            :func:`~trjoludus.platform.create_backend` selects when
+            :meth:`run` starts. Supplying one explicitly is how tests pin the
+            backend, and it overrides both the platform default and
+            ``TRJOLUDUS_BACKEND``.
 
     Raises:
         TypeError: If ``title``, ``width`` or ``height`` has the wrong type.
@@ -93,7 +94,9 @@ class Application:
         self._title = _validate_title(title)
         self._size = _validate_size(size)
         self._clock = Clock(max_fps=max_fps)
-        self._backend = NullBackend() if backend is None else backend
+        # Deliberately not selected here: constructing an Application must not
+        # open a display, so an unset backend is resolved when run() starts.
+        self._backend = backend
 
     @property
     def game(self) -> Game:
@@ -110,8 +113,11 @@ class Application:
         return self._clock
 
     @property
-    def backend(self) -> PlatformBackend:
-        """The backend this application runs on."""
+    def backend(self) -> PlatformBackend | None:
+        """The backend this application runs on.
+
+        ``None`` until :meth:`run` selects one, unless one was supplied.
+        """
         return self._backend
 
     def run(self) -> None:
@@ -128,7 +134,15 @@ class Application:
         :meth:`~trjoludus.game.Game.on_stop` runs only when
         :meth:`~trjoludus.game.Game.on_start` completed, so a game is never
         asked to tear down state it never built.
+
+        Raises:
+            PlatformError: If no backend could be started -- for example when
+                no X display is reachable. Nothing has been created at that
+                point, so there is nothing to clean up.
         """
+        if self._backend is None:
+            self._backend = create_backend()
+
         window = None
         started = False
         try:

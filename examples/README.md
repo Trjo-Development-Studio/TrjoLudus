@@ -59,16 +59,16 @@ the last.
 
 | File | What it is |
 | --- | --- |
-| `window_test.py` | **Engine smoke test, not tutorial material.** |
+| `window_test.py` | Opens a real window with `tl.run()`. Engine smoke test, and the seed of the first lesson. |
 
-`window_test.py` opens a real X11 window and is how the Linux backend was
-manually verified. It deliberately breaks the public-API-only rule above: it
-imports `trjoludus.platform.linux.X11Backend`, because `tl.run()` cannot yet
-select a backend on its own.
+`window_test.py` now uses **only the public API** -- backend selection landed,
+so `tl.run()` opens a window on its own and nothing imports
+`trjoludus.platform`. It therefore no longer breaks the rule above, and is
+close to what a real first lesson will look like.
 
-That makes it a poor first lesson, so it is not one. Once automatic backend
-selection exists, `tl.run()` alone will be enough to open a window, and this
-file gets replaced by a proper first lesson that needs no `platform` import.
+It is still catalogued as a smoke test rather than "Lesson 1", because a
+lesson needs explanation written for a beginner, not just working code. Turning
+it into one is tutorial work, not engine work.
 
 ## Planned progression
 

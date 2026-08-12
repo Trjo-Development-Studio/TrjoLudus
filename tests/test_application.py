@@ -13,6 +13,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import trjoludus
 from trjoludus.app import DEFAULT_SIZE, DEFAULT_TITLE, Application, run
@@ -513,6 +514,19 @@ class TestClockIntegration(unittest.TestCase):
 
 
 class TestRunFunction(unittest.TestCase):
+    """tl.run() takes no backend argument, by design.
+
+    It now selects a real backend per platform, which on this machine means
+    X11. These tests pin it to the null backend through the documented
+    TRJOLUDUS_BACKEND override -- the same mechanism a user would reach for --
+    so the suite neither opens windows nor needs a display.
+    """
+
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"TRJOLUDUS_BACKEND": "null"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_run_is_exposed_publicly(self):
         self.assertIs(trjoludus.run, run)
 
@@ -541,8 +555,10 @@ class TestRunFunction(unittest.TestCase):
 
 class TestHeadless(unittest.TestCase):
     def test_full_lifecycle_without_a_graphical_environment(self):
+        """tl.run() drives a whole game headless via TRJOLUDUS_BACKEND=null."""
         env = {k: v for k, v in os.environ.items() if k not in GRAPHICAL_ENV_VARS}
         env["PYTHONPATH"] = PACKAGE_PARENT
+        env["TRJOLUDUS_BACKEND"] = "null"
         script = (
             "import os\n"
             f"assert not any(v in os.environ for v in {GRAPHICAL_ENV_VARS!r})\n"
