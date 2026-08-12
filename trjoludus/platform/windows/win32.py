@@ -118,6 +118,15 @@ class Win32Window(PlatformWindow):
         return self._closed
 
     @property
+    def is_open(self) -> bool:
+        """Whether the native window still exists.
+
+        False once the game closes it *or* Windows destroys it, which are
+        different things: a window can go away without anyone asking.
+        """
+        return not self._closed and not self._destroyed_by_os
+
+    @property
     def size(self) -> tuple[int, int]:
         """Current ``(width, height)`` of the client area, in pixels.
 
@@ -132,7 +141,7 @@ class Win32Window(PlatformWindow):
     @title.setter
     def title(self, value: str) -> None:
         self._title = value
-        if not self._closed:
+        if self.is_open:
             self._backend._set_title(self._hwnd, value)
 
     def poll_events(self) -> Iterable[Event]:
@@ -143,8 +152,12 @@ class Win32Window(PlatformWindow):
         return events
 
     def present(self, pixels, width: int, height: int) -> None:
-        """Blit a BGRA buffer onto the window."""
-        if self._closed:
+        """Blit a BGRA buffer onto the window.
+
+        Does nothing once the window is gone, so a frame drawn just before
+        Windows destroyed it is not sent to a dead handle.
+        """
+        if not self.is_open:
             return
         self._backend._put_image(self._hwnd, pixels, width, height)
 
@@ -200,6 +213,11 @@ class Win32Backend(PlatformBackend):
     def windows(self) -> tuple[Win32Window, ...]:
         """Windows that are currently open."""
         return tuple(self._windows.values())
+
+    @property
+    def keeps_application_alive(self) -> bool:
+        """Whether any window this backend created still exists."""
+        return any(window.is_open for window in self._windows.values())
 
     def _enable_dpi_awareness(self) -> None:
         """Opt into per-monitor DPI awareness, before any window exists.

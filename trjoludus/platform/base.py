@@ -107,6 +107,25 @@ class PlatformBackend(ABC):
             PlatformError: If the window could not be created.
         """
 
+    @property
+    @abstractmethod
+    def keeps_application_alive(self) -> bool:
+        """Whether there is still a reason for the application to run.
+
+        A graphical backend answers ``False`` once every window it created has
+        gone -- closed by the game, or destroyed by the desktop without asking
+        first. A game whose last window has vanished cannot be seen or
+        interacted with, so the loop and any blocking engine call must stop
+        rather than run on against nothing.
+
+        This is asked while a game is running, after its window exists. It is
+        a property of the backend rather than of a window because it is the
+        *last* window closing that matters, not any particular one.
+
+        The null backend answers ``True`` always: it has no window to lose,
+        and headless runs must not end because of one.
+        """
+
     @abstractmethod
     def shutdown(self) -> None:
         """Release resources held by the backend itself.

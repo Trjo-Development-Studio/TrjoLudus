@@ -213,7 +213,7 @@ class Application:
     def _loop(self, window) -> None:
         """Run frames until the game asks to stop."""
         game = self._game
-        while not game.quit_requested:
+        while not game.quit_requested and self._backend.keeps_application_alive:
             # The whole batch is delivered even if a handler calls quit():
             # these events already happened, and dropping some of them would
             # make delivery depend on where in the batch quit() landed.
@@ -258,6 +258,12 @@ class Application:
             if self._keys:
                 return self._keys.popleft()
             if self._game.quit_requested:
+                return None
+            # A window can vanish without asking -- the desktop can destroy
+            # it, and then no close request is coming. Waiting on for a key
+            # that can no longer be typed would hang the process, so the same
+            # rule that ends the loop ends the wait.
+            if not self._backend.keeps_application_alive:
                 return None
             self._deliver(self._window.poll_events())
             if self._keys or self._game.quit_requested:

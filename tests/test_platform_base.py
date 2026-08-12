@@ -56,6 +56,10 @@ class DummyBackend(PlatformBackend):
     def name(self) -> str:
         return "dummy"
 
+    @property
+    def keeps_application_alive(self) -> bool:
+        return True
+
     def create_window(self, title: str, width: int, height: int) -> PlatformWindow:
         return DummyWindow(title, width, height)
 

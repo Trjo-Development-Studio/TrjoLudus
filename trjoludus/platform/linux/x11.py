@@ -184,6 +184,15 @@ class X11Window(PlatformWindow):
         return self._closed
 
     @property
+    def is_open(self) -> bool:
+        """Whether the X window still exists.
+
+        False once the game closes it *or* the server destroys it, which are
+        different things: a window can go away without anyone asking.
+        """
+        return not self._closed and not self._destroyed_by_server
+
+    @property
     def size(self) -> tuple[int, int]:
         """Current ``(width, height)`` of the client area, in pixels.
 
@@ -199,7 +208,7 @@ class X11Window(PlatformWindow):
     @title.setter
     def title(self, value: str) -> None:
         self._title = value
-        if not self._closed:
+        if self.is_open:
             self._backend._apply_title(self._id, value)
 
     def poll_events(self) -> Iterable[Event]:
@@ -210,8 +219,13 @@ class X11Window(PlatformWindow):
         return events
 
     def present(self, pixels, width: int, height: int) -> None:
-        """Blit a BGRA buffer onto the window."""
-        if self._closed:
+        """Blit a BGRA buffer onto the window.
+
+        Does nothing once the window is gone. A frame drawn just before the
+        desktop destroyed it would otherwise reach a dead drawable, which the
+        server reports as a protocol error.
+        """
+        if not self.is_open:
             return
         self._backend._put_image(self._id, pixels, width, height)
 
@@ -280,6 +294,11 @@ class X11Backend(PlatformBackend):
     def windows(self) -> tuple[X11Window, ...]:
         """Windows that are currently open."""
         return tuple(self._windows.values())
+
+    @property
+    def keeps_application_alive(self) -> bool:
+        """Whether any window this backend created still exists."""
+        return any(window.is_open for window in self._windows.values())
 
     def _intern_atom(self, name: str) -> int:
         return self._xlib.XInternAtom(self._display, name.encode("ascii"), False)

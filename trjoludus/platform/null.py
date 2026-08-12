@@ -162,6 +162,18 @@ class NullBackend(PlatformBackend):
         """
         return tuple(self._windows)
 
+    @property
+    def keeps_application_alive(self) -> bool:
+        """Always ``True``.
+
+        Window existence is deliberately not the stop condition here. This is
+        the backend headless runs and tests use, and there is no window on
+        screen to lose in the first place; ending a run because a simulated
+        window was closed would make the stand-in behave unlike the thing it
+        stands in for in the one way that matters to a test.
+        """
+        return True
+
     def create_window(self, title: str, width: int, height: int) -> NullWindow:
         """Create a simulated window.
 

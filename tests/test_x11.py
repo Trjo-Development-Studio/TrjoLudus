@@ -28,6 +28,7 @@ from trjoludus.platform.base import PlatformBackend, PlatformWindow
 from trjoludus.platform.linux import _xlib
 from trjoludus.platform.linux.x11 import (
     BACKEND_NAME,
+    protocol_errors,
     X11Backend,
     X11Window,
     encode_legacy_title,
@@ -612,6 +613,108 @@ class TestDocumentationMatchesImplementation(unittest.TestCase):
         text = self.architecture_text()
         for expected in ("_NET_WM_NAME", "WM_NAME", "UTF8_STRING", "8859-1"):
             self.assertIn(expected, text)
+
+
+@requires_x11
+class TestWindowLifetime(unittest.TestCase):
+    """The real backend answers the lifetime question correctly."""
+
+    def setUp(self):
+        self.backend = X11Backend()
+        self.addCleanup(self.backend.shutdown)
+
+    def test_a_fresh_window_keeps_the_application_alive(self):
+        self.backend.create_window("alive", 200, 150)
+        self.assertTrue(self.backend.keeps_application_alive)
+
+    def test_closing_the_only_window_ends_it(self):
+        window = self.backend.create_window("alive", 200, 150)
+        window.close()
+        self.assertFalse(self.backend.keeps_application_alive)
+
+    def test_one_of_two_windows_closing_does_not_end_it(self):
+        first = self.backend.create_window("first", 200, 150)
+        self.backend.create_window("second", 200, 150)
+        first.close()
+        self.assertTrue(self.backend.keeps_application_alive)
+
+    def test_closing_the_last_window_ends_it(self):
+        first = self.backend.create_window("first", 200, 150)
+        second = self.backend.create_window("second", 200, 150)
+        first.close()
+        second.close()
+        self.assertFalse(self.backend.keeps_application_alive)
+
+    def test_a_window_destroyed_by_the_server_ends_it(self):
+        """The case with no close request: the window simply goes away."""
+        window = self.backend.create_window("doomed", 200, 150)
+        self.assertTrue(self.backend.keeps_application_alive)
+
+        # Destroy it behind the engine's back, as the desktop could.
+        self.backend._xlib.XDestroyWindow(self.backend._display,
+                                          window.window_id)
+        self.backend._xlib.XFlush(self.backend._display)
+
+        deadline = time.monotonic() + EVENT_TIMEOUT
+        while time.monotonic() < deadline and window.is_open:
+            window.poll_events()          # pumps, which delivers DestroyNotify
+            time.sleep(0.01)
+
+        self.assertFalse(window.is_open, "DestroyNotify was never noticed")
+        self.assertFalse(self.backend.keeps_application_alive)
+
+    def test_a_destroyed_window_is_not_destroyed_again(self):
+        """Cleanup must not ask the server to destroy what is already gone."""
+        window = self.backend.create_window("doomed", 200, 150)
+        self.backend._xlib.XDestroyWindow(self.backend._display,
+                                          window.window_id)
+        self.backend._xlib.XFlush(self.backend._display)
+
+        deadline = time.monotonic() + EVENT_TIMEOUT
+        while time.monotonic() < deadline and window.is_open:
+            window.poll_events()
+            time.sleep(0.01)
+
+        errors_before = len(protocol_errors)
+        window.close()
+        self.backend._xlib.XSync(self.backend._display, False)
+        self.assertEqual(len(protocol_errors), errors_before,
+                         "closing an already-destroyed window upset the server")
+
+
+@requires_x11
+class TestApplicationStopsWithTheWindow(unittest.TestCase):
+    def test_a_game_stops_when_its_real_window_is_destroyed(self):
+        """End to end: no close request, no hang, clean shutdown.
+
+        This prints one X protocol error, and that is expected rather than a
+        fault. The window is destroyed from inside on_update, and X is
+        asynchronous: the DestroyNotify has not arrived by the time that same
+        frame is presented, so the engine cannot yet know the drawable is
+        gone. The error is reported rather than swallowed, and the frame after
+        it is skipped.
+        """
+        backend = X11Backend()
+
+        class G(Game):
+            frames = 0
+
+            def on_update(self, dt):
+                self.frames += 1
+                if self.frames == 3:
+                    window = backend.windows[0]
+                    backend._xlib.XDestroyWindow(backend._display,
+                                                 window.window_id)
+                    backend._xlib.XFlush(backend._display)
+                if self.frames > 600:      # a hang would be the bug
+                    self.quit()
+
+        game = G()
+        Application(game, title="x11 lifetime", size=(200, 150),
+                    max_fps=None, backend=backend).run()
+
+        self.assertLess(game.frames, 600, "the loop ran on without a window")
+        self.assertTrue(backend.is_shut_down)
 
 
 @requires_x11
