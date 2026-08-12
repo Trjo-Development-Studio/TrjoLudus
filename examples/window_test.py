@@ -19,20 +19,25 @@ from pathlib import Path
 # script's own directory on sys.path, not the repository root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import trjoludus as tl  # noqa: E402
+from trjoludus import (  # noqa: E402
+    Game,
+    WindowCloseRequested,
+    WindowResized,
+    run,
+)
 
 
-class WindowTest(tl.Game):
+class WindowTest(Game):
     def on_start(self):
         self.elapsed = 0.0
         self.frames = 0
         print("Window open. Close it to quit.")
 
     def on_event(self, event):
-        if isinstance(event, tl.WindowCloseRequested):
+        if isinstance(event, WindowCloseRequested):
             print("Close requested.")
             self.quit()
-        elif isinstance(event, tl.WindowResized):
+        elif isinstance(event, WindowResized):
             print(f"Resized to {event.width}x{event.height}")
 
     def on_update(self, dt):
@@ -48,4 +53,4 @@ class WindowTest(tl.Game):
 
 
 if __name__ == "__main__":
-    tl.run(WindowTest(), title="TrjoLudus — X11 Test", size=(800, 600))
+    run(WindowTest(), title="TrjoLudus — X11 Test", size=(800, 600))

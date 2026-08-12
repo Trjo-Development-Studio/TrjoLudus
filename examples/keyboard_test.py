@@ -17,34 +17,43 @@ from pathlib import Path
 # Run straight from a checkout, without installing first.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import trjoludus as tl  # noqa: E402
+from trjoludus import (  # noqa: E402
+    Game,
+    GameObject,
+    WindowCloseRequested,
+    create,
+    input,
+    key,
+    keyboard,
+    run,
+)
 
 SPRITE = Path(__file__).resolve().parent / "assets" / "player.png"
 STEP = 20
 
 
-class KeyboardTest(tl.Game):
+class KeyboardTest(Game):
     def on_start(self):
-        tl.create.image(200, 130, SPRITE, "player")
-        self.player = tl.GameObject("player")
+        create.image(200, 130, SPRITE, "player")
+        self.player = GameObject("player")
         print("Press W A S D to move, Escape to quit.")
 
     def on_event(self, event):
-        if isinstance(event, tl.WindowCloseRequested):
+        if isinstance(event, WindowCloseRequested):
             self.quit()
 
     def on_update(self, dt):
-        tl.keyboard.wait(tl.input.key)
+        keyboard.wait(input.key)
 
-        if tl.key == "W":
+        if key == "W":
             self.player.move.y(-STEP)
-        if tl.key == "S":
+        if key == "S":
             self.player.move.y(STEP)
-        if tl.key == "A":
+        if key == "A":
             self.player.move.x(-STEP)
-        if tl.key == "D":
+        if key == "D":
             self.player.move.x(STEP)
-        if tl.key == "ESCAPE":
+        if key == "ESCAPE":
             self.quit()
 
     def on_stop(self):
@@ -52,4 +61,4 @@ class KeyboardTest(tl.Game):
 
 
 if __name__ == "__main__":
-    tl.run(KeyboardTest(), title="TrjoLudus — Keyboard Test", size=(480, 320))
+    run(KeyboardTest(), title="TrjoLudus — Keyboard Test", size=(480, 320))

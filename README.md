@@ -3,7 +3,7 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** On Linux, `tl.run()` opens a **real window**, draws
+> **Status: pre-alpha.** On Linux, `run()` opens a **real window**, draws
 > named image objects into it, moves them, destroys them, and waits for
 > keyboard input. A Windows backend exists but is **not yet verified on
 > Windows**. Mouse, sound, collision and animation are not implemented yet.
@@ -79,24 +79,29 @@ Python 3.11 or newer. Nothing else.
 ## Usage
 
 ```python
-import trjoludus as tl
+from trjoludus import Game, GameObject, WindowCloseRequested, create, run
 
 
-class MyGame(tl.Game):
+class MyGame(Game):
     def on_start(self):
-        tl.create.image(100, 100, "player.png", "player")
-        self.player = tl.GameObject("player")
+        create.image(100, 100, "player.png", "player")
+        self.player = GameObject("player")
 
     def on_event(self, event):
-        if isinstance(event, tl.WindowCloseRequested):
+        if isinstance(event, WindowCloseRequested):
             self.quit()
 
     def on_update(self, dt):
         self.player.move.x(1)
 
 
-tl.run(MyGame(), title="My Game", size=(800, 600))
+run(MyGame(), title="My Game", size=(800, 600))
 ```
+
+Import the names you use and then use them directly -- no prefix on every
+call. `import trjoludus` on its own would only bind the name `trjoludus`,
+because that is what an `import` statement does; naming what you want is how
+Python brings the names themselves into a file.
 
 `create.image` creates something that *stays*: call it once, and the engine draws
 it every frame. Coordinates are pixels from the top-left corner of the window,
@@ -116,11 +121,15 @@ python examples/keyboard_test.py
 ### Keyboard input
 
 ```python
-tl.keyboard.wait(tl.input.key)
+from trjoludus import input, key, keyboard
 
-if tl.key == "W":
+keyboard.wait(input.key)
+
+print(key)          # W
+
+if key == "W":
     player.move.y(-50)
-if tl.key == "S":
+if key == "S":
     player.move.y(50)
 ```
 
@@ -136,6 +145,9 @@ Keys outside that list are ignored rather than reported under a guessed name.
 > `key` is a live value, not a string. It compares, prints and formats like the
 > key name, which covers ordinary use. To keep a copy that will not change with
 > the next press, use `str(key)` or `key.value`.
+>
+> `from trjoludus import input` shadows Python's built-in `input()` in that
+> file. If a file needs both, import `trjoludus.input` under another name.
 
 See [`examples/keyboard_test.py`](examples/keyboard_test.py).
 
@@ -188,8 +200,7 @@ TRJOLUDUS_BACKEND=null python examples/window_test.py
 
 [`examples/`](examples/README.md) is the home of the **Introduction & Tutorial
 project** -- how to *use* the engine, as opposed to `tests/`, which verifies
-that the engine is *correct*. It grows as engine features land, and currently
-holds only the window smoke test above.
+that the engine is *correct*. It grows as engine features land.
 
 ## Development
 

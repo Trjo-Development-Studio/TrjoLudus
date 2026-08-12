@@ -15,22 +15,29 @@ from pathlib import Path
 # Run straight from a checkout, without installing first.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import trjoludus as tl  # noqa: E402
+from trjoludus import (  # noqa: E402
+    Game,
+    GameObject,
+    WindowCloseRequested,
+    WindowResized,
+    create,
+    run,
+)
 
 SPRITE = Path(__file__).resolve().parent / "assets" / "player.png"
 
 
-class ImageTest(tl.Game):
+class ImageTest(Game):
     def on_start(self):
-        tl.create.image(120, 90, SPRITE, "player")
-        self.player = tl.GameObject("player")
+        create.image(120, 90, SPRITE, "player")
+        self.player = GameObject("player")
         self.direction = 1
         print(f"Created {self.player.name!r} at {self.player.position}, "
               f"{self.player.size[0]}x{self.player.size[1]} pixels.")
         print("Close the window to quit.")
 
     def on_event(self, event):
-        if isinstance(event, tl.WindowCloseRequested):
+        if isinstance(event, WindowCloseRequested):
             self.quit()
 
     def on_update(self, dt):
@@ -44,4 +51,4 @@ class ImageTest(tl.Game):
 
 
 if __name__ == "__main__":
-    tl.run(ImageTest(), title="TrjoLudus — Image Test", size=(480, 320))
+    run(ImageTest(), title="TrjoLudus — Image Test", size=(480, 320))
