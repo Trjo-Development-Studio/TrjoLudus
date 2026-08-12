@@ -8,6 +8,7 @@ to break by accident, so they are checked mechanically rather than by review.
 """
 
 import ast
+import sys
 import unittest
 from pathlib import Path
 
@@ -82,6 +83,18 @@ class TestArchitecturalRules(unittest.TestCase):
         tree = ast.parse((PLATFORM_ROOT / "base.py").read_text(encoding="utf-8"))
         self.assertNotIn("ctypes", imported_module_names(tree))
         self.assertEqual(os_probe_attributes(tree), set())
+
+    def test_null_backend_is_platform_neutral(self):
+        """The null backend lives under platform/ but must touch no OS."""
+        tree = ast.parse((PLATFORM_ROOT / "null.py").read_text(encoding="utf-8"))
+        self.assertNotIn("ctypes", imported_module_names(tree))
+        self.assertEqual(os_probe_attributes(tree), set())
+
+    def test_null_backend_imports_only_stdlib_and_trjoludus(self):
+        """No third-party dependencies, and no other backend."""
+        tree = ast.parse((PLATFORM_ROOT / "null.py").read_text(encoding="utf-8"))
+        allowed = set(sys.stdlib_module_names) | {"trjoludus"}
+        self.assertEqual(imported_module_names(tree) - allowed, set())
 
 
 class TestCheckerItself(unittest.TestCase):

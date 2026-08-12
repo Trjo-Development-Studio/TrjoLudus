@@ -52,6 +52,7 @@ trjoludus/
     platform/
         __init__.py    OS detection
         base.py        backend contracts
+        null.py        headless backend, for tests and CI
 tests/                 stdlib unittest suite
 ```
 
