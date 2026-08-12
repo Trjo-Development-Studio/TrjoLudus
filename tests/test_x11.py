@@ -50,14 +50,21 @@ X11_AVAILABLE = x11_available()
 requires_x11 = unittest.skipUnless(X11_AVAILABLE, "no usable X11 display")
 
 
-def wait_for_event(window, event_type, timeout=EVENT_TIMEOUT):
-    """Poll until an event of ``event_type`` arrives, or give up."""
+def wait_for_event(window, event_type, timeout=EVENT_TIMEOUT, match=None):
+    """Poll until a matching event arrives, or give up.
+
+    ``match`` matters for resizes. X is asynchronous and a window manager may
+    emit ConfigureNotify events of its own -- on map, when placing the window,
+    or when applying its own size constraints. Waiting for merely the first
+    WindowResized therefore races the compositor, so a test that triggered a
+    specific size must wait for *that* size.
+    """
     deadline = time.monotonic() + timeout
     seen = []
     while time.monotonic() < deadline:
         seen.extend(window.poll_events())
         for event in seen:
-            if isinstance(event, event_type):
+            if isinstance(event, event_type) and (match is None or match(event)):
                 return event, seen
         time.sleep(0.01)
     return None, seen
@@ -349,23 +356,29 @@ class TestResize(unittest.TestCase):
         self.backend = X11Backend()
         self.addCleanup(self.backend.shutdown)
 
-    def test_resize_produces_a_window_resized_event(self):
-        window = self.backend.create_window("resize me", 400, 300)
+    def _resize(self, window, width, height):
         self.backend._xlib.XResizeWindow(
-            self.backend._display, window.window_id, 640, 480)
+            self.backend._display, window.window_id, width, height)
         self.backend._xlib.XFlush(self.backend._display)
 
-        found, seen = wait_for_event(window, WindowResized)
-        self.assertIsNotNone(found, f"no resize event; saw {seen}")
+    def test_resize_produces_a_window_resized_event(self):
+        window = self.backend.create_window("resize me", 400, 300)
+        self._resize(window, 640, 480)
+
+        found, seen = wait_for_event(
+            window, WindowResized,
+            match=lambda e: (e.width, e.height) == (640, 480))
+        self.assertIsNotNone(found, f"no 640x480 resize event; saw {seen}")
         self.assertEqual((found.width, found.height), (640, 480))
 
     def test_size_tracks_the_resize(self):
         window = self.backend.create_window("resize me", 400, 300)
-        self.backend._xlib.XResizeWindow(
-            self.backend._display, window.window_id, 512, 384)
-        self.backend._xlib.XFlush(self.backend._display)
+        self._resize(window, 512, 384)
 
-        wait_for_event(window, WindowResized)
+        found, seen = wait_for_event(
+            window, WindowResized,
+            match=lambda e: (e.width, e.height) == (512, 384))
+        self.assertIsNotNone(found, f"no 512x384 resize event; saw {seen}")
         self.assertEqual(window.size, (512, 384))
 
 
