@@ -171,6 +171,168 @@ class TestGameObject(SceneTestCase):
         self.assertIs(trjoludus.GameObject, GameObject)
 
 
+class TestMovement(SceneTestCase):
+    """player.move.x(50) -- relative movement, in pixels."""
+
+    def player(self, x=100, y=100):
+        current_scene().add(SceneObject("player", make_image(), x, y))
+        return GameObject("player")
+
+    def test_positive_x_moves_right(self):
+        player = self.player()
+        player.move.x(50)
+        self.assertEqual(player.x, 150)
+
+    def test_negative_x_moves_left(self):
+        player = self.player()
+        player.move.x(-50)
+        self.assertEqual(player.x, 50)
+
+    def test_positive_y_moves_down(self):
+        """+y is downward, matching the coordinate convention."""
+        player = self.player()
+        player.move.y(50)
+        self.assertEqual(player.y, 150)
+
+    def test_negative_y_moves_up(self):
+        player = self.player()
+        player.move.y(-50)
+        self.assertEqual(player.y, 50)
+
+    def test_moving_x_leaves_y_alone(self):
+        player = self.player()
+        player.move.x(50)
+        self.assertEqual(player.position, (150, 100))
+
+    def test_moving_y_leaves_x_alone(self):
+        player = self.player()
+        player.move.y(50)
+        self.assertEqual(player.position, (100, 150))
+
+    def test_repeated_movement_accumulates(self):
+        """Movement is an offset, not an assignment."""
+        player = self.player()
+        player.move.x(50)
+        player.move.x(50)
+        self.assertEqual(player.x, 200)
+
+    def test_opposite_movements_cancel_out(self):
+        player = self.player(y=0)
+        player.move.y(25)
+        player.move.y(-10)
+        self.assertEqual(player.y, 15)
+
+    def test_combined_x_and_y_movement(self):
+        player = self.player(0, 0)
+        player.move.x(30)
+        player.move.y(-40)
+        self.assertEqual(player.position, (30, -40))
+
+    def test_movement_after_setting_x_directly(self):
+        """The documented distinction: assign absolute, move relative."""
+        player = self.player()
+        player.x = 250
+        player.move.x(50)
+        self.assertEqual(player.x, 300)
+
+    def test_movement_after_setting_y_directly(self):
+        player = self.player()
+        player.y = 100
+        player.move.y(-25)
+        self.assertEqual(player.y, 75)
+
+    def test_movement_is_reflected_by_position(self):
+        player = self.player(10, 20)
+        player.move.x(5)
+        player.move.y(6)
+        self.assertEqual(player.position, (15, 26))
+
+    def test_movement_changes_the_underlying_scene_object(self):
+        """What moves must be what the engine draws."""
+        player = self.player()
+        player.move.x(42)
+        self.assertEqual(current_scene().require("player").x, 142)
+
+    def test_movement_through_a_second_handle_is_visible_to_the_first(self):
+        first = self.player()
+        second = GameObject("player")
+        second.move.x(10)
+        self.assertEqual(first.x, 110)
+
+    def test_zero_movement_changes_nothing(self):
+        player = self.player()
+        player.move.x(0)
+        player.move.y(0)
+        self.assertEqual(player.position, (100, 100))
+
+    def test_movement_off_screen_is_allowed(self):
+        """There is no world boundary, so nothing is clamped."""
+        player = self.player(10, 10)
+        player.move.x(-500)
+        player.move.y(-500)
+        self.assertEqual(player.position, (-490, -490))
+
+    def test_movement_does_not_change_the_image(self):
+        player = self.player()
+        before = current_scene().require("player").image
+        player.move.x(70)
+        self.assertIs(current_scene().require("player").image, before)
+        self.assertEqual(player.size, before.size)
+
+    def test_move_is_the_same_object_each_time(self):
+        player = self.player()
+        self.assertIs(player.move, player.move)
+
+    def test_non_integer_distances_are_rejected(self):
+        """A float position would fail much later, inside the renderer."""
+        player = self.player()
+        for bad in (1.5, "10", None, True):
+            with self.subTest(distance=bad):
+                with self.assertRaises(TypeError):
+                    player.move.x(bad)
+        self.assertEqual(player.x, 100)
+
+    def test_setting_a_non_integer_position_is_rejected(self):
+        player = self.player()
+        with self.assertRaises(TypeError):
+            player.x = 1.5
+        self.assertEqual(player.x, 100)
+
+    def test_moving_a_removed_object_raises(self):
+        """Silently moving something nobody draws looks like a bug in TrjoLudus."""
+        player = self.player()
+        current_scene().remove("player")
+        with self.assertRaises(SceneError) as caught:
+            player.move.x(10)
+        message = str(caught.exception)
+        self.assertIn("player", message)
+        self.assertIn("removed", message)
+
+    def test_reading_a_removed_object_raises(self):
+        player = self.player()
+        current_scene().remove("player")
+        for read in (lambda: player.x, lambda: player.position,
+                     lambda: player.size, lambda: player.visible):
+            with self.subTest(), self.assertRaises(SceneError):
+                read()
+
+    def test_a_removed_object_is_not_silently_recreated(self):
+        player = self.player()
+        current_scene().remove("player")
+        with self.assertRaises(SceneError):
+            player.move.x(10)
+        self.assertNotIn("player", current_scene())
+
+    def test_a_new_object_with_the_same_name_is_a_different_object(self):
+        old = self.player()
+        current_scene().remove("player")
+        new = self.player(0, 0)
+        new.move.x(5)
+        self.assertEqual(new.x, 5)
+        with self.assertRaises(SceneError):
+            old.move.x(5)
+
+
 class TestCreateImage(SceneTestCase):
     def setUp(self):
         super().setUp()

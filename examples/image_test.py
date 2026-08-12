@@ -24,6 +24,7 @@ class ImageTest(tl.Game):
     def on_start(self):
         tl.create.image(120, 90, SPRITE, "player")
         self.player = tl.GameObject("player")
+        self.direction = 1
         print(f"Created {self.player.name!r} at {self.player.position}, "
               f"{self.player.size[0]}x{self.player.size[1]} pixels.")
         print("Close the window to quit.")
@@ -32,8 +33,14 @@ class ImageTest(tl.Game):
         if isinstance(event, tl.WindowCloseRequested):
             self.quit()
 
+    def on_update(self, dt):
+        # Relative movement: each call shifts the object from where it is now.
+        self.player.move.x(2 * self.direction)
+        if not 40 <= self.player.x <= 380:
+            self.direction = -self.direction
+
     def on_stop(self):
-        print("Goodbye.")
+        print(f"Goodbye. The player ended at {self.player.position}.")
 
 
 if __name__ == "__main__":

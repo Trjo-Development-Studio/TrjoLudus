@@ -377,6 +377,62 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
         red, green, blue = DEFAULT_CLEAR_COLOUR
         self.assertEqual(self.pixel(window, 0, 0), (blue, green, red, 255))
 
+    def test_movement_changes_where_the_object_is_drawn(self):
+        """move.x/move.y must reach the pixels, not just the handle."""
+        path = _sprite(self, 1, 1, (200, 100, 50))
+        red, green, blue = DEFAULT_CLEAR_COLOUR
+
+        def start():
+            import trjoludus as tl
+
+            player = tl.create.image(0, 0, path, "player")
+            player.move.x(4)
+            player.move.y(2)
+
+        window = self.run_game(start)
+        self.assertEqual(self.pixel(window, 4, 2), (50, 100, 200, 255))
+        self.assertEqual(self.pixel(window, 0, 0), (blue, green, red, 255))
+
+    def test_repeated_movement_is_drawn_at_the_accumulated_position(self):
+        path = _sprite(self, 1, 1, (200, 100, 50))
+
+        def start():
+            import trjoludus as tl
+
+            player = tl.create.image(1, 1, path, "player")
+            player.move.x(2)
+            player.move.x(2)
+
+        window = self.run_game(start)
+        self.assertEqual(self.pixel(window, 5, 1), (50, 100, 200, 255))
+
+    def test_negative_movement_is_drawn_at_the_new_position(self):
+        path = _sprite(self, 1, 1, (200, 100, 50))
+
+        def start():
+            import trjoludus as tl
+
+            player = tl.create.image(6, 6, path, "player")
+            player.move.x(-3)
+            player.move.y(-4)
+
+        window = self.run_game(start)
+        self.assertEqual(self.pixel(window, 3, 2), (50, 100, 200, 255))
+
+    def test_the_image_itself_is_unchanged_by_movement(self):
+        path = _sprite(self, 2, 2, (200, 100, 50))
+
+        def start():
+            import trjoludus as tl
+
+            tl.create.image(0, 0, path, "player").move.x(3)
+
+        window = self.run_game(start)
+        # Same colour and same 2x2 extent, just somewhere else.
+        for x in (3, 4):
+            for y in (0, 1):
+                self.assertEqual(self.pixel(window, x, y), (50, 100, 200, 255))
+
     def test_the_scene_is_cleared_when_a_run_finishes(self):
         """A second run must not inherit the first game's objects."""
         from trjoludus.scene import current_scene

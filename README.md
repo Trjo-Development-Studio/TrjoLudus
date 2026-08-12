@@ -90,7 +90,7 @@ class MyGame(tl.Game):
             self.quit()
 
     def on_update(self, dt):
-        self.player.x += 1
+        self.player.move.x(1)
 
 
 tl.run(MyGame(), title="My Game", size=(800, 600))
@@ -99,6 +99,21 @@ tl.run(MyGame(), title="My Game", size=(800, 600))
 `create.image` creates something that *stays*: call it once, and the engine draws
 it every frame. Coordinates are pixels from the top-left corner of the window,
 and they position the image's top-left corner.
+
+### Placing and moving objects
+
+There are two ways to change where an object is, and they mean different
+things:
+
+```python
+player.x = 250       # put it exactly there
+player.move.x(50)    # and now 50 pixels further right
+```
+
+Assigning `x` or `y` sets an **absolute** position. `move.x` and `move.y`
+change it **relative** to wherever the object is now, so calls add up: two
+`move.x(50)` calls move it 100 pixels in total. Negative values move left and
+up. Nothing is clamped -- an object may be moved off screen.
 
 On Linux that opens a real window. The engine owns the loop; a game supplies
 callbacks. Closing the window is a *request* -- a game that wants to honour it

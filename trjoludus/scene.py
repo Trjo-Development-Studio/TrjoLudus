@@ -20,7 +20,14 @@ through it acts on what the engine is actually drawing, and a future
 
 from trjoludus.errors import TrjoLudusError
 
-__all__ = ["GameObject", "Scene", "SceneError", "SceneObject", "current_scene"]
+__all__ = [
+    "GameObject",
+    "Movement",
+    "Scene",
+    "SceneError",
+    "SceneObject",
+    "current_scene",
+]
 
 
 class SceneError(TrjoLudusError):
@@ -34,7 +41,7 @@ class SceneObject:
     them and :class:`GameObject` reaches them.
     """
 
-    __slots__ = ("name", "image", "x", "y", "visible")
+    __slots__ = ("name", "image", "x", "y", "visible", "removed")
 
     def __init__(self, name: str, image, x: int, y: int) -> None:
         self.name = name
@@ -42,6 +49,9 @@ class SceneObject:
         self.x = x
         self.y = y
         self.visible = True
+        #: Set when the object leaves the scene. Handles check it so that
+        #: using one afterwards is an error rather than a silent no-op.
+        self.removed = False
 
     def __repr__(self) -> str:
         return (
@@ -109,11 +119,15 @@ class Scene:
         Raises:
             SceneError: If nothing is registered under that name.
         """
-        if self._objects.pop(name, None) is None:
+        removed = self._objects.pop(name, None)
+        if removed is None:
             raise SceneError(self._missing_message(name))
+        removed.removed = True
 
     def clear(self) -> None:
         """Forget every object."""
+        for obj in self._objects.values():
+            obj.removed = True
         self._objects.clear()
 
     def _missing_message(self, name: str) -> str:
@@ -143,6 +157,70 @@ def current_scene() -> Scene:
     return _current
 
 
+def _check_pixels(label: str, value) -> int:
+    """Reject anything that is not a whole number of pixels.
+
+    Positions index into the frame buffer, so a float would fail much later
+    with a message about slice indices. Catching it here says what is actually
+    wrong. ``bool`` is excluded because ``True`` as a distance is a mistake,
+    not an intention.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(
+            f"{label} must be a whole number of pixels, got "
+            f"{type(value).__name__}"
+        )
+    return value
+
+
+class Movement:
+    """Moves one object relative to where it currently is.
+
+    Reached as :attr:`GameObject.move`::
+
+        player.move.x(50)    # 50 pixels right
+        player.move.x(-50)   # 50 pixels left
+        player.move.y(50)    # 50 pixels down
+        player.move.y(-50)   # 50 pixels up
+
+    Every call is relative, so they add up: two ``move.x(50)`` calls move the
+    object 100 pixels in total. To put an object at an exact place, assign to
+    :attr:`GameObject.x` or :attr:`GameObject.y` instead.
+
+    Nothing is clamped. An object may be moved partly or wholly outside the
+    window; there is no world boundary, and inventing one here would surprise
+    a game that meant to move something off screen.
+    """
+
+    __slots__ = ("_owner",)
+
+    def __init__(self, owner: "GameObject") -> None:
+        self._owner = owner
+
+    def x(self, pixels: int) -> None:
+        """Move right by ``pixels``, or left if negative.
+
+        Raises:
+            TypeError: If ``pixels`` is not a whole number.
+            SceneError: If the object has been removed.
+        """
+        obj = self._owner._live()
+        obj.x += _check_pixels("a movement distance", pixels)
+
+    def y(self, pixels: int) -> None:
+        """Move down by ``pixels``, or up if negative.
+
+        Raises:
+            TypeError: If ``pixels`` is not a whole number.
+            SceneError: If the object has been removed.
+        """
+        obj = self._owner._live()
+        obj.y += _check_pixels("a movement distance", pixels)
+
+    def __repr__(self) -> str:
+        return f"Movement({self._owner.name!r})"
+
+
 class GameObject:
     """A game's handle on a named object.
 
@@ -152,6 +230,11 @@ class GameObject:
         tl.create.image(100, 100, "player.png", "player")
         player = tl.GameObject("player")
 
+    Position can be set outright or changed by a relative amount::
+
+        player.x = 250       # put it at x = 250
+        player.move.x(50)    # and then 50 pixels further right
+
     Args:
         name: The name the object was created with.
 
@@ -160,7 +243,7 @@ class GameObject:
             that do exist.
     """
 
-    __slots__ = ("_object",)
+    __slots__ = ("_object", "_move")
 
     def __init__(self, name: str) -> None:
         if not isinstance(name, str):
@@ -169,6 +252,28 @@ class GameObject:
                 f"{type(name).__name__}"
             )
         self._object = current_scene().require(name)
+        self._move = Movement(self)
+
+    def _live(self) -> SceneObject:
+        """Return the scene object, or explain that it is gone.
+
+        A handle outlives the object it points at -- something can be removed
+        while a game still holds a reference to it. Letting that keep working
+        would move an object nobody draws, which looks like the engine
+        ignoring the game.
+        """
+        if self._object.removed:
+            raise SceneError(
+                f"The game object {self._object.name!r} has been removed and "
+                f"cannot be used any more. Create it again with "
+                f"create.image(...) if you still need it."
+            )
+        return self._object
+
+    @property
+    def move(self) -> Movement:
+        """Relative movement: ``player.move.x(50)``."""
+        return self._move
 
     @property
     def name(self) -> str:
@@ -177,40 +282,49 @@ class GameObject:
 
     @property
     def x(self) -> int:
-        """Distance in pixels from the left edge of the window."""
-        return self._object.x
+        """Distance in pixels from the left edge of the window.
+
+        Assigning sets an absolute position; :attr:`move` changes it by a
+        relative amount.
+        """
+        return self._live().x
 
     @x.setter
     def x(self, value: int) -> None:
-        self._object.x = value
+        self._live().x = _check_pixels("x", value)
 
     @property
     def y(self) -> int:
-        """Distance in pixels from the top edge of the window."""
-        return self._object.y
+        """Distance in pixels from the top edge of the window.
+
+        Assigning sets an absolute position; :attr:`move` changes it by a
+        relative amount.
+        """
+        return self._live().y
 
     @y.setter
     def y(self, value: int) -> None:
-        self._object.y = value
+        self._live().y = _check_pixels("y", value)
 
     @property
     def position(self) -> tuple[int, int]:
         """``(x, y)`` of the image's top-left corner."""
-        return (self._object.x, self._object.y)
+        obj = self._live()
+        return (obj.x, obj.y)
 
     @property
     def size(self) -> tuple[int, int]:
         """``(width, height)`` of the object's image, in pixels."""
-        return self._object.image.size
+        return self._live().image.size
 
     @property
     def visible(self) -> bool:
         """Whether the engine draws this object."""
-        return self._object.visible
+        return self._live().visible
 
     @visible.setter
     def visible(self, value: bool) -> None:
-        self._object.visible = bool(value)
+        self._live().visible = bool(value)
 
     def __eq__(self, other: object) -> bool:
         """Two handles are equal when they refer to the same object."""
