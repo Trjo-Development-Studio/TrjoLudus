@@ -10,7 +10,7 @@ into private modules, because everything below this surface is free to change.
     print(trjoludus.detect_platform())
 """
 
-from trjoludus import draw
+from trjoludus import create
 from trjoludus.app import Application, run
 from trjoludus.errors import (
     PlatformError,
@@ -32,7 +32,7 @@ __all__ = [
     "run",
     "Application",
     # Game objects
-    "draw",
+    "create",
     "GameObject",
     # Errors
     "TrjoLudusError",

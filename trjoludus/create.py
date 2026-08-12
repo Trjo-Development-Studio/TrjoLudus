@@ -1,16 +1,17 @@
-"""How a game puts things on screen.
+"""How a game brings things into the world.
 
 ::
 
-    tl.draw.image(100, 100, "player.png", "player")
+    tl.create.image(100, 100, "player.png", "player")
 
-**This creates something that stays.** It is not a per-frame paint call: the
-engine keeps the object and draws it every frame until it is removed. Calling
-it once, when the game starts, is the normal thing to do -- calling it every
-frame would try to create a second object with the same name and fail.
+**What is created stays.** This is not a per-frame paint call: the engine keeps
+the object and draws it every frame until it is removed. Calling it once, when
+the game starts, is the normal thing to do -- calling it every frame would try
+to create a second object with the same name and fail.
 
-That is worth stating plainly because ``draw`` reads like an instruction to
-paint right now, which is how most 2D libraries use the word.
+The name says so. ``create`` is for things that become part of the scene;
+``draw`` is reserved for immediate, per-frame drawing such as UI, which does
+not exist yet.
 """
 
 from trjoludus.image import load_image

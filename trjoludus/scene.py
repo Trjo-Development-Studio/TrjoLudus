@@ -2,7 +2,7 @@
 
 A game says what should exist; the engine keeps track of it and draws it::
 
-    tl.draw.image(100, 100, "player.png", "player")
+    tl.create.image(100, 100, "player.png", "player")
     player = tl.GameObject("player")
 
 **Coordinates.** The origin is the top-left corner of the window, x increases
@@ -30,7 +30,7 @@ class SceneError(TrjoLudusError):
 class SceneObject:
     """One drawable thing the engine owns.
 
-    Games do not build these directly; :func:`trjoludus.draw.image` creates
+    Games do not build these directly; :func:`trjoludus.create.image` creates
     them and :class:`GameObject` reaches them.
     """
 
@@ -121,7 +121,7 @@ class Scene:
             return (
                 f"There is no game object named {name!r}: nothing has been "
                 f"created yet. Create it first, for example with "
-                f"draw.image(x, y, \"picture.png\", {name!r})."
+                f"create.image(x, y, \"picture.png\", {name!r})."
             )
         existing = ", ".join(repr(n) for n in self._objects)
         return (
@@ -147,9 +147,9 @@ class GameObject:
     """A game's handle on a named object.
 
     Looks up an object that already exists -- it does not create one. Objects
-    come into being through :func:`trjoludus.draw.image`::
+    come into being through :func:`trjoludus.create.image`::
 
-        tl.draw.image(100, 100, "player.png", "player")
+        tl.create.image(100, 100, "player.png", "player")
         player = tl.GameObject("player")
 
     Args:

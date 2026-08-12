@@ -328,7 +328,7 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
         def start():
             import trjoludus as tl
 
-            tl.draw.image(2, 3, path, "player")
+            tl.create.image(2, 3, path, "player")
 
         window = self.run_game(start)
         self.assertEqual(self.pixel(window, 2, 3), (50, 100, 200, 255))
@@ -340,7 +340,7 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
         def start():
             import trjoludus as tl
 
-            tl.draw.image(2, 3, path, "player")
+            tl.create.image(2, 3, path, "player")
 
         window = self.run_game(start)
         red, green, blue = DEFAULT_CLEAR_COLOUR
@@ -354,7 +354,7 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
         def start():
             import trjoludus as tl
 
-            state["player"] = tl.draw.image(0, 0, path, "player")
+            state["player"] = tl.create.image(0, 0, path, "player")
 
         original_run = self.run_game
 
@@ -371,7 +371,7 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
         def start():
             import trjoludus as tl
 
-            tl.draw.image(0, 0, path, "player").visible = False
+            tl.create.image(0, 0, path, "player").visible = False
 
         window = self.run_game(start)
         red, green, blue = DEFAULT_CLEAR_COLOUR
@@ -386,7 +386,7 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
         def start():
             import trjoludus as tl
 
-            tl.draw.image(0, 0, path, "player")
+            tl.create.image(0, 0, path, "player")
 
         self.run_game(start)
         self.assertEqual(len(current_scene()), 0)

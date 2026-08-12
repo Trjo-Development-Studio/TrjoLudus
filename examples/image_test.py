@@ -4,7 +4,7 @@ Run it from anywhere:
 
     python examples/image_test.py
 
-`draw.image` creates an object that *stays*: it is called once, and the engine
+`create.image` creates an object that *stays*: it is called once, and the engine
 draws it every frame until it is removed. Coordinates are pixels from the
 top-left corner of the window, and they place the image's top-left corner.
 """
@@ -22,7 +22,7 @@ SPRITE = Path(__file__).resolve().parent / "assets" / "player.png"
 
 class ImageTest(tl.Game):
     def on_start(self):
-        tl.draw.image(120, 90, SPRITE, "player")
+        tl.create.image(120, 90, SPRITE, "player")
         self.player = tl.GameObject("player")
         print(f"Created {self.player.name!r} at {self.player.position}, "
               f"{self.player.size[0]}x{self.player.size[1]} pixels.")

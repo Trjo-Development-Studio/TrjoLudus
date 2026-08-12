@@ -49,7 +49,7 @@ trjoludus/
     __init__.py        public API surface
     app.py             application and the engine-owned game loop
     game.py            Game base class
-    draw.py            creating named objects
+    create.py          creating persistent game objects
     scene.py           named game objects and the scene holding them
     image.py           images, and PNG decoding
     render.py          the frame buffer objects are composited into
@@ -82,7 +82,7 @@ import trjoludus as tl
 
 class MyGame(tl.Game):
     def on_start(self):
-        tl.draw.image(100, 100, "player.png", "player")
+        tl.create.image(100, 100, "player.png", "player")
         self.player = tl.GameObject("player")
 
     def on_event(self, event):
@@ -96,7 +96,7 @@ class MyGame(tl.Game):
 tl.run(MyGame(), title="My Game", size=(800, 600))
 ```
 
-`draw.image` creates something that *stays*: call it once, and the engine draws
+`create.image` creates something that *stays*: call it once, and the engine draws
 it every frame. Coordinates are pixels from the top-left corner of the window,
 and they position the image's top-left corner.
 

@@ -8,7 +8,7 @@ platform layer.
 import unittest
 
 import trjoludus
-from trjoludus import draw
+from trjoludus import create
 from trjoludus.image import Image
 from trjoludus.scene import (
     GameObject,
@@ -171,79 +171,79 @@ class TestGameObject(SceneTestCase):
         self.assertIs(trjoludus.GameObject, GameObject)
 
 
-class TestDrawImage(SceneTestCase):
+class TestCreateImage(SceneTestCase):
     def setUp(self):
         super().setUp()
         self.sprite = _write_test_png(self, 6, 4)
 
     def test_creates_and_registers_an_object(self):
-        draw.image(10, 20, self.sprite, "player")
+        create.image(10, 20, self.sprite, "player")
         self.assertIn("player", current_scene())
 
     def test_returns_a_usable_handle(self):
-        player = draw.image(10, 20, self.sprite, "player")
+        player = create.image(10, 20, self.sprite, "player")
         self.assertIsInstance(player, GameObject)
         self.assertEqual(player.name, "player")
         self.assertEqual(player.position, (10, 20))
 
     def test_the_handle_matches_a_later_lookup(self):
-        created = draw.image(1, 2, self.sprite, "player")
+        created = create.image(1, 2, self.sprite, "player")
         self.assertEqual(created, GameObject("player"))
 
     def test_size_comes_from_the_image(self):
-        self.assertEqual(draw.image(0, 0, self.sprite, "p").size, (6, 4))
+        self.assertEqual(create.image(0, 0, self.sprite, "p").size, (6, 4))
 
     def test_duplicate_names_are_rejected(self):
-        draw.image(0, 0, self.sprite, "player")
+        create.image(0, 0, self.sprite, "player")
         with self.assertRaises(SceneError):
-            draw.image(50, 50, self.sprite, "player")
+            create.image(50, 50, self.sprite, "player")
 
     def test_objects_keep_their_own_positions(self):
-        a = draw.image(1, 2, self.sprite, "a")
-        b = draw.image(30, 40, self.sprite, "b")
+        a = create.image(1, 2, self.sprite, "a")
+        b = create.image(30, 40, self.sprite, "b")
         self.assertEqual(a.position, (1, 2))
         self.assertEqual(b.position, (30, 40))
 
     def test_negative_positions_are_allowed(self):
         """Partly off-screen is a normal thing for a game object to be."""
-        self.assertEqual(draw.image(-10, -20, self.sprite, "p").position,
+        self.assertEqual(create.image(-10, -20, self.sprite, "p").position,
                          (-10, -20))
 
     def test_a_missing_file_is_reported_clearly(self):
         with self.assertRaises(trjoludus.ImageError) as caught:
-            draw.image(0, 0, "no-such-file.png", "player")
+            create.image(0, 0, "no-such-file.png", "player")
         self.assertIn("no-such-file.png", str(caught.exception))
 
     def test_a_failed_load_registers_nothing(self):
         with self.assertRaises(trjoludus.ImageError):
-            draw.image(0, 0, "no-such-file.png", "player")
+            create.image(0, 0, "no-such-file.png", "player")
         self.assertEqual(len(current_scene()), 0)
 
     def test_a_non_string_name_is_rejected(self):
         with self.assertRaises(TypeError):
-            draw.image(0, 0, self.sprite, 42)
+            create.image(0, 0, self.sprite, 42)
 
     def test_an_empty_name_is_rejected(self):
         with self.assertRaises(ValueError):
-            draw.image(0, 0, self.sprite, "")
+            create.image(0, 0, self.sprite, "")
 
     def test_non_integer_coordinates_are_rejected(self):
         with self.assertRaises(TypeError):
-            draw.image(1.5, 0, self.sprite, "player")
+            create.image(1.5, 0, self.sprite, "player")
 
     def test_remove(self):
-        draw.image(0, 0, self.sprite, "player")
-        draw.remove("player")
+        create.image(0, 0, self.sprite, "player")
+        create.remove("player")
         self.assertNotIn("player", current_scene())
 
     def test_removing_frees_the_name(self):
-        draw.image(0, 0, self.sprite, "player")
-        draw.remove("player")
-        draw.image(5, 5, self.sprite, "player")  # must not raise
+        create.image(0, 0, self.sprite, "player")
+        create.remove("player")
+        create.image(5, 5, self.sprite, "player")  # must not raise
         self.assertEqual(GameObject("player").position, (5, 5))
 
-    def test_draw_is_exposed_publicly(self):
-        self.assertIs(trjoludus.draw, draw)
+    def test_create_is_exposed_publicly(self):
+        self.assertIs(trjoludus.create, create)
 
 
 def _write_test_png(test, width, height):
