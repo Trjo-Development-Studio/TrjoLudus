@@ -10,6 +10,7 @@ into private modules, because everything below this surface is free to change.
     print(trjoludus.detect_platform())
 """
 
+from trjoludus import draw
 from trjoludus.app import Application, run
 from trjoludus.errors import (
     PlatformError,
@@ -18,7 +19,9 @@ from trjoludus.errors import (
 )
 from trjoludus.events import Event, WindowCloseRequested, WindowResized
 from trjoludus.game import Game
+from trjoludus.image import ImageError
 from trjoludus.platform import PlatformName, detect_platform
+from trjoludus.scene import GameObject, SceneError
 
 __version__ = "0.0.1"
 
@@ -28,10 +31,15 @@ __all__ = [
     "Game",
     "run",
     "Application",
+    # Game objects
+    "draw",
+    "GameObject",
     # Errors
     "TrjoLudusError",
     "PlatformError",
     "UnsupportedPlatformError",
+    "ImageError",
+    "SceneError",
     # Events
     "Event",
     "WindowCloseRequested",

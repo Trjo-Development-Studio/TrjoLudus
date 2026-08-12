@@ -3,10 +3,10 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** Milestone 1 is complete on Linux: `tl.run()` opens a
-> **real window**, runs the engine-owned loop with frame timing, delivers
-> platform-neutral events and shuts down cleanly. A Windows backend exists but
-> is **not yet verified on Windows**. Rendering is not implemented at all.
+> **Status: pre-alpha.** On Linux, `tl.run()` opens a **real window**, runs the
+> engine-owned loop with frame timing, and draws named image objects into it.
+> A Windows backend exists but is **not yet verified on Windows**. Input,
+> sound, collision and animation are not implemented yet.
 
 ## Philosophy
 
@@ -49,6 +49,10 @@ trjoludus/
     __init__.py        public API surface
     app.py             application and the engine-owned game loop
     game.py            Game base class
+    draw.py            creating named objects
+    scene.py           named game objects and the scene holding them
+    image.py           images, and PNG decoding
+    render.py          the frame buffer objects are composited into
     errors.py          exception hierarchy
     events.py          platform-neutral event types
     clock.py           frame timing
@@ -78,20 +82,23 @@ import trjoludus as tl
 
 class MyGame(tl.Game):
     def on_start(self):
-        self.elapsed = 0.0
+        tl.draw.image(100, 100, "player.png", "player")
+        self.player = tl.GameObject("player")
 
     def on_event(self, event):
         if isinstance(event, tl.WindowCloseRequested):
             self.quit()
 
     def on_update(self, dt):
-        self.elapsed += dt
-        if self.elapsed > 1.0:
-            self.quit()
+        self.player.x += 1
 
 
 tl.run(MyGame(), title="My Game", size=(800, 600))
 ```
+
+`draw.image` creates something that *stays*: call it once, and the engine draws
+it every frame. Coordinates are pixels from the top-left corner of the window,
+and they position the image's top-left corner.
 
 On Linux that opens a real window. The engine owns the loop; a game supplies
 callbacks. Closing the window is a *request* -- a game that wants to honour it

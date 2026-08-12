@@ -54,6 +54,28 @@ class PlatformWindow(ABC):
         """
 
     @abstractmethod
+    def present(self, pixels, width: int, height: int) -> None:
+        """Put a block of pixels on screen, covering the client area.
+
+        This is the whole of the rendering contract. A backend is handed
+        finished pixels and asked to display them; it is told nothing about
+        game objects, images or draw order, which all belong to the layer
+        above.
+
+        Args:
+            pixels: ``width * height * 4`` bytes in BGRA order. That layout is
+                what an X11 ``ZPixmap`` and a 32-bit Windows DIB both expect
+                on a little-endian machine, so a backend can copy it as-is
+                rather than converting every pixel of every frame.
+            width: Width of the buffer in pixels.
+            height: Height of the buffer in pixels.
+
+        Sizes that no longer match the window are the normal case for a frame
+        that was drawn just before a resize, so a backend must cope rather
+        than fail.
+        """
+
+    @abstractmethod
     def close(self) -> None:
         """Destroy the window and release its operating-system resources.
 

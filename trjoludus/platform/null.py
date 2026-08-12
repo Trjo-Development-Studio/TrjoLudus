@@ -44,6 +44,15 @@ class NullWindow(PlatformWindow):
         self._pending: list[Event] = []
         self._closed = False
 
+        #: How many frames have been presented. Specific to this backend.
+        self.frames_presented = 0
+        #: Size of the most recent frame, or ``None``. Specific to this
+        #: backend.
+        self.last_frame_size: tuple[int, int] | None = None
+        #: Pixels of the most recent frame, or ``None``. Specific to this
+        #: backend, and what lets rendering be checked without a display.
+        self.last_frame: bytes | None = None
+
     @property
     def size(self) -> tuple[int, int]:
         """Current ``(width, height)`` of the client area, in pixels.
@@ -80,6 +89,20 @@ class NullWindow(PlatformWindow):
         """
         events, self._pending = self._pending, []
         return events
+
+    def present(self, pixels, width: int, height: int) -> None:
+        """Accept a frame and remember what it was.
+
+        There is no screen, so nothing is displayed. Recording the size and
+        the frame count is what lets the rendering path be tested end to end
+        without a display: a test can run a game and check that frames of the
+        right shape reached the backend.
+        """
+        if self._closed:
+            return
+        self.frames_presented += 1
+        self.last_frame_size = (width, height)
+        self.last_frame = bytes(pixels)
 
     def close(self) -> None:
         """Mark the window closed and drop the resources it owns.

@@ -59,6 +59,7 @@ HICON = HANDLE
 HCURSOR = HANDLE
 HBRUSH = HANDLE
 HMENU = HANDLE
+HDC = HANDLE
 LPVOID = c_void_p
 WPARAM = c_size_t
 LPARAM = c_ssize_t
@@ -113,6 +114,33 @@ class MSG(Structure):
         ("lParam", LPARAM),
         ("time", DWORD),
         ("pt", POINT),
+    ]
+
+
+class BITMAPINFOHEADER(Structure):
+    """Describes the layout of a device-independent bitmap."""
+
+    _fields_ = [
+        ("biSize", DWORD),
+        ("biWidth", LONG),
+        ("biHeight", LONG),
+        ("biPlanes", WORD),
+        ("biBitCount", WORD),
+        ("biCompression", DWORD),
+        ("biSizeImage", DWORD),
+        ("biXPelsPerMeter", LONG),
+        ("biYPelsPerMeter", LONG),
+        ("biClrUsed", DWORD),
+        ("biClrImportant", DWORD),
+    ]
+
+
+class BITMAPINFO(Structure):
+    """A bitmap header plus its (unused at 32 bpp) colour table."""
+
+    _fields_ = [
+        ("bmiHeader", BITMAPINFOHEADER),
+        ("bmiColors", DWORD * 3),
     ]
 
 
@@ -174,6 +202,15 @@ IDC_ARROW = 32512
 #: system lies about window dimensions on scaled displays.
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
 
+#: BITMAPINFOHEADER compression: none, pixels stored directly.
+BI_RGB = 0
+
+#: SetDIBitsToDevice colour-table mode: the values are literal RGB.
+DIB_RGB_COLORS = 0
+
+#: StretchBlt/SetDIBits raster operation: copy the source over the target.
+SRCCOPY = 0x00CC0020
+
 
 # --- function signatures -------------------------------------------------
 
@@ -202,11 +239,23 @@ USER32_SIGNATURES: dict[str, tuple[list, object]] = {
     # a real window. Declaring it here keeps every Win32 prototype in one
     # audited place rather than duplicated into a test file.
     "PostMessageW": ([HWND, UINT, WPARAM, LPARAM], BOOL),
+    # Presenting a frame.
+    "GetDC": ([HWND], HDC),
+    "ReleaseDC": ([HWND, HDC], INT),
 }
 
 #: ``name -> (argtypes, restype)`` for kernel32.
 KERNEL32_SIGNATURES: dict[str, tuple[list, object]] = {
     "GetModuleHandleW": ([LPCWSTR], HINSTANCE),
+}
+
+#: ``name -> (argtypes, restype)`` for gdi32, used to put pixels on screen.
+GDI32_SIGNATURES: dict[str, tuple[list, object]] = {
+    "StretchDIBits": (
+        [HDC, INT, INT, INT, INT, INT, INT, INT, INT,
+         LPVOID, POINTER(BITMAPINFO), UINT, DWORD],
+        INT,
+    ),
 }
 
 #: Functions that may legitimately be missing on an older Windows. Their
@@ -222,7 +271,7 @@ def load_libraries():
     call without needing a separate ``GetLastError`` declaration.
 
     Returns:
-        ``(user32, kernel32)``. A function listed in
+        ``(user32, kernel32, gdi32)``. A function listed in
         :data:`OPTIONAL_FUNCTIONS` that this Windows version does not export
         is simply absent from the returned library.
 
@@ -240,12 +289,14 @@ def load_libraries():
     try:
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
     except OSError as exc:  # pragma: no cover -- needs a broken Windows
         raise PlatformError(f"Could not load the Win32 libraries: {exc}") from exc
 
     for library, signatures in (
         (user32, USER32_SIGNATURES),
         (kernel32, KERNEL32_SIGNATURES),
+        (gdi32, GDI32_SIGNATURES),
     ):
         for name, (argtypes, restype) in signatures.items():
             try:
@@ -260,4 +311,4 @@ def load_libraries():
             function.argtypes = argtypes
             function.restype = restype
 
-    return user32, kernel32
+    return user32, kernel32, gdi32

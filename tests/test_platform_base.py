@@ -19,6 +19,7 @@ class DummyWindow(PlatformWindow):
         self._title = title
         self._size = (width, height)
         self._pending: list[Event] = []
+        self.presented: list[tuple[bytes, int, int]] = []
         self.close_count = 0
 
     @property
@@ -36,6 +37,9 @@ class DummyWindow(PlatformWindow):
     def poll_events(self) -> Iterable[Event]:
         events, self._pending = self._pending, []
         return events
+
+    def present(self, pixels, width: int, height: int) -> None:
+        self.presented.append((bytes(pixels), width, height))
 
     def close(self) -> None:
         self.close_count += 1

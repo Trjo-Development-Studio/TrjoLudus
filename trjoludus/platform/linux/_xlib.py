@@ -83,6 +83,12 @@ CLIENT_MESSAGE_FORMAT_LONG = 32
 #: Passed to XGetWindowProperty to accept whatever type a property has.
 ANY_PROPERTY_TYPE = 0
 
+#: XCreateImage format: one whole pixel per unit, packed.
+Z_PIXMAP = 2
+
+#: Bit order/padding for a 32-bit-per-pixel ZPixmap.
+BITMAP_PAD_32 = 32
+
 
 # --- event structures ----------------------------------------------------
 
@@ -138,6 +144,50 @@ class XDestroyWindowEvent(Structure):
         ("display", Display),
         ("event", Window),
         ("window", Window),
+    ]
+
+
+class Visual(Structure):
+    """A display's colour layout. Read to confirm the byte order we assume."""
+
+    _fields_ = [
+        ("ext_data", c_void_p),
+        ("visualid", c_ulong),
+        ("c_class", c_int),
+        ("red_mask", c_ulong),
+        ("green_mask", c_ulong),
+        ("blue_mask", c_ulong),
+        ("bits_per_rgb", c_int),
+        ("map_entries", c_int),
+    ]
+
+
+class XImage(Structure):
+    """An image the server can draw.
+
+    Only the fields TrjoLudus reads or writes are named; the trailing function
+    table is opaque padding so the struct is the right size for Xlib to fill
+    in. Instances are created by ``XCreateImage`` rather than by hand.
+    """
+
+    _fields_ = [
+        ("width", c_int),
+        ("height", c_int),
+        ("xoffset", c_int),
+        ("format", c_int),
+        ("data", c_void_p),
+        ("byte_order", c_int),
+        ("bitmap_unit", c_int),
+        ("bitmap_bit_order", c_int),
+        ("bitmap_pad", c_int),
+        ("depth", c_int),
+        ("bytes_per_line", c_int),
+        ("bits_per_pixel", c_int),
+        ("red_mask", c_ulong),
+        ("green_mask", c_ulong),
+        ("blue_mask", c_ulong),
+        ("obdata", c_void_p),
+        ("funcs", c_void_p * 6),
     ]
 
 
@@ -214,6 +264,21 @@ FUNCTION_SIGNATURES: dict[str, tuple[list, object]] = {
         [Display, Window, Atom, Atom, c_int, c_int, c_char_p, c_int],
         c_int,
     ),
+    # Drawing.
+    "XDefaultVisual": ([Display, c_int], POINTER(Visual)),
+    "XDefaultDepth": ([Display, c_int], c_int),
+    "XDefaultGC": ([Display, c_int], c_void_p),
+    "XCreateImage": (
+        [Display, POINTER(Visual), c_uint, c_int, c_int, c_void_p,
+         c_uint, c_uint, c_int, c_int],
+        POINTER(XImage),
+    ),
+    "XPutImage": (
+        [Display, Window, c_void_p, POINTER(XImage),
+         c_int, c_int, c_int, c_int, c_uint, c_uint],
+        c_int,
+    ),
+    "XDestroyImage": ([POINTER(XImage)], c_int),
     # Events.
     "XSelectInput": ([Display, Window, c_long], c_int),
     "XPending": ([Display], c_int),

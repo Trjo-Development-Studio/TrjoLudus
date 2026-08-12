@@ -107,6 +107,12 @@ class Win32Window(PlatformWindow):
         events, self._pending = self._pending, []
         return events
 
+    def present(self, pixels, width: int, height: int) -> None:
+        """Blit a BGRA buffer onto the window."""
+        if self._closed:
+            return
+        self._backend._put_image(self._hwnd, pixels, width, height)
+
     def close(self) -> None:
         """Destroy the native window. Safe to call more than once."""
         if self._closed:
@@ -129,7 +135,7 @@ class Win32Backend(PlatformBackend):
     """
 
     def __init__(self) -> None:
-        self._user32, self._kernel32 = _user32.load_libraries()
+        self._user32, self._kernel32, self._gdi32 = _user32.load_libraries()
         self._instance = self._kernel32.GetModuleHandleW(None)
         self._windows: dict[int, Win32Window] = {}
         self._shut_down = False
@@ -272,6 +278,48 @@ class Win32Backend(PlatformBackend):
         active code page.
         """
         self._user32.SetWindowTextW(hwnd, title)
+
+    def _put_image(self, hwnd: int, pixels, width: int, height: int) -> None:
+        """Copy a BGRA buffer to a window with StretchDIBits.
+
+        A 32-bit ``BI_RGB`` DIB is blue, green, red, unused in memory, which
+        is the layout the engine already composites into, so the buffer goes
+        across untouched.
+
+        ``biHeight`` is negative on purpose: a positive height means a DIB is
+        stored bottom-up, and the engine's rows run top-down.
+        """
+        if width <= 0 or height <= 0:
+            return
+
+        buffer = pixels if isinstance(pixels, bytearray) else bytearray(pixels)
+        if len(buffer) < width * height * 4:
+            return
+
+        info = _user32.BITMAPINFO()
+        info.bmiHeader.biSize = ctypes.sizeof(_user32.BITMAPINFOHEADER)
+        info.bmiHeader.biWidth = width
+        info.bmiHeader.biHeight = -height
+        info.bmiHeader.biPlanes = 1
+        info.bmiHeader.biBitCount = 32
+        info.bmiHeader.biCompression = _user32.BI_RGB
+
+        raw = (ctypes.c_char * len(buffer)).from_buffer(buffer)
+        device = self._user32.GetDC(hwnd)
+        if not device:
+            return
+        try:
+            self._gdi32.StretchDIBits(
+                device,
+                0, 0, width, height,
+                0, 0, width, height,
+                ctypes.cast(raw, ctypes.c_void_p),
+                ctypes.byref(info),
+                _user32.DIB_RGB_COLORS,
+                _user32.SRCCOPY,
+            )
+        finally:
+            self._user32.ReleaseDC(hwnd, device)
 
     def _destroy_window(self, window: Win32Window) -> None:
         """Destroy one window's native resources."""

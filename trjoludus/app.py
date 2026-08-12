@@ -29,6 +29,8 @@ from trjoludus.clock import DEFAULT_MAX_FPS, Clock
 from trjoludus.game import Game
 from trjoludus.platform import create_backend
 from trjoludus.platform.base import PlatformBackend
+from trjoludus.render import Framebuffer
+from trjoludus.scene import current_scene
 
 __all__ = ["Application", "run"]
 
@@ -94,6 +96,7 @@ class Application:
         self._title = _validate_title(title)
         self._size = _validate_size(size)
         self._clock = Clock(max_fps=max_fps)
+        self._framebuffer = Framebuffer(*self._size)
         # Deliberately not selected here: constructing an Application must not
         # open a display, so an unset backend is resolved when run() starts.
         self._backend = backend
@@ -165,7 +168,13 @@ class Application:
                     if window is not None:
                         window.close()
                 finally:
-                    self._backend.shutdown()
+                    try:
+                        self._backend.shutdown()
+                    finally:
+                        # The objects belonged to this run. Leaving them would
+                        # make a second run inherit the first game's scene,
+                        # and every name in it would then collide.
+                        current_scene().clear()
 
     def _loop(self, window) -> None:
         """Run frames until the game asks to stop."""
@@ -181,6 +190,27 @@ class Application:
                 break
 
             game.on_update(self._clock.tick())
+            self._render(window)
+
+    def _render(self, window) -> None:
+        """Draw the scene and hand the finished frame to the backend.
+
+        Rendering happens after the update so a frame shows the state the game
+        just produced, rather than the previous one.
+        """
+        width, height = window.size
+        self._framebuffer.resize(width, height)
+        self._framebuffer.clear()
+
+        for obj in current_scene().objects():
+            if obj.visible:
+                self._framebuffer.draw_image(obj.image, obj.x, obj.y)
+
+        window.present(
+            self._framebuffer.pixels,
+            self._framebuffer.width,
+            self._framebuffer.height,
+        )
 
 
 def run(

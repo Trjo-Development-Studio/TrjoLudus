@@ -150,6 +150,38 @@ class BackendContract:
         window.close()
         self.assertEqual(list(window.poll_events()), [])
 
+    # --- presenting ------------------------------------------------------
+
+    def frame(self, width, height, colour=(0, 0, 0, 255)):
+        return bytearray(bytes(colour) * (width * height))
+
+    def test_present_accepts_a_frame_the_size_of_the_window(self):
+        window = self.backend().create_window("test", 64, 48)
+        width, height = window.size
+        window.present(self.frame(width, height), width, height)
+
+    def test_present_accepts_repeated_frames(self):
+        window = self.backend().create_window("test", 32, 32)
+        width, height = window.size
+        for _ in range(3):
+            window.present(self.frame(width, height), width, height)
+
+    def test_present_accepts_a_stale_size(self):
+        """A frame drawn just before a resize arrives with the old size."""
+        window = self.backend().create_window("test", 64, 48)
+        window.present(self.frame(32, 24), 32, 24)
+        window.present(self.frame(96, 72), 96, 72)
+
+    def test_present_accepts_bytes_as_well_as_bytearray(self):
+        window = self.backend().create_window("test", 16, 16)
+        width, height = window.size
+        window.present(bytes(self.frame(width, height)), width, height)
+
+    def test_present_after_close_is_safe(self):
+        window = self.backend().create_window("test", 16, 16)
+        window.close()
+        window.present(self.frame(16, 16), 16, 16)
+
     # --- cleanup ---------------------------------------------------------
 
     def test_close_marks_the_window_closed(self):

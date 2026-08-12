@@ -16,6 +16,7 @@ window it belongs to; :meth:`X11Window.poll_events` returns only that window's
 events.
 """
 
+import ctypes
 import sys
 from collections import deque
 from collections.abc import Iterable
@@ -172,6 +173,12 @@ class X11Window(PlatformWindow):
         events, self._pending = self._pending, []
         return events
 
+    def present(self, pixels, width: int, height: int) -> None:
+        """Blit a BGRA buffer onto the window."""
+        if self._closed:
+            return
+        self._backend._put_image(self._id, pixels, width, height)
+
     def close(self) -> None:
         """Destroy the X window. Safe to call more than once."""
         if self._closed:
@@ -209,6 +216,13 @@ class X11Backend(PlatformBackend):
         self._root = self._xlib.XRootWindow(self._display, self._screen)
         self._windows: dict[int, X11Window] = {}
         self._shut_down = False
+
+        self._check_visual()
+        self._depth = self._xlib.XDefaultDepth(self._display, self._screen)
+        self._gc = self._xlib.XDefaultGC(self._display, self._screen)
+        self._image = None
+        self._image_size: tuple[int, int] | None = None
+        self._image_buffer = None
 
         intern = self._intern_atom
         self._wm_protocols = intern("WM_PROTOCOLS")
@@ -291,6 +305,7 @@ class X11Backend(PlatformBackend):
         self._windows.clear()
 
         if self._display is not None:
+            self._release_image()
             self._xlib.XCloseDisplay(self._display)
             self._display = None
 
@@ -323,6 +338,87 @@ class X11Backend(PlatformBackend):
             self._display, window_id, encode_legacy_title(title)
         )
         self._xlib.XFlush(self._display)
+
+    def _check_visual(self) -> None:
+        """Confirm the display really uses the byte order the engine writes.
+
+        The engine composites straight into BGRA so that presenting a frame is
+        a copy rather than a per-pixel conversion. That is correct on an
+        ordinary little-endian TrueColor display, which is what desktop X11
+        and Xwayland provide; anything else would silently draw with the wrong
+        colours, so it is refused with an explanation instead.
+        """
+        visual = self._xlib.XDefaultVisual(self._display, self._screen).contents
+        depth = self._xlib.XDefaultDepth(self._display, self._screen)
+        expected = (0x00FF0000, 0x0000FF00, 0x000000FF)
+        actual = (visual.red_mask, visual.green_mask, visual.blue_mask)
+
+        if depth not in (24, 32) or actual != expected or sys.byteorder != "little":
+            raise PlatformError(
+                f"This X display uses a pixel layout TrjoLudus cannot draw to "
+                f"yet: depth {depth}, masks "
+                f"R={actual[0]:#x} G={actual[1]:#x} B={actual[2]:#x}, "
+                f"{sys.byteorder}-endian. Only 24- or 32-bit TrueColor on a "
+                f"little-endian machine is supported."
+            )
+
+    def _put_image(self, window_id: int, pixels, width: int, height: int) -> None:
+        """Copy a BGRA buffer to a window with XPutImage.
+
+        The XImage is rebuilt whenever the frame size changes, and its ``data``
+        pointer is cleared before it is freed: Xlib's XDestroyImage frees
+        whatever ``data`` points at, and that buffer belongs to Python.
+        """
+        if self._display is None or width <= 0 or height <= 0:
+            return
+
+        buffer = pixels if isinstance(pixels, bytearray) else bytearray(pixels)
+        needed = width * height * 4
+        if len(buffer) < needed:
+            return
+
+        if self._image_size != (width, height):
+            self._release_image()
+            image = self._xlib.XCreateImage(
+                self._display,
+                self._xlib.XDefaultVisual(self._display, self._screen),
+                self._depth,
+                _xlib.Z_PIXMAP,
+                0,
+                None,
+                width,
+                height,
+                _xlib.BITMAP_PAD_32,
+                0,
+            )
+            if not image:
+                raise PlatformError("XCreateImage failed to allocate an image.")
+            self._image = image
+            self._image_size = (width, height)
+
+        # Keep a reference to the exact object whose memory the XImage points
+        # at, so it cannot be collected while the server is reading it.
+        self._image_buffer = (ctypes.c_char * len(buffer)).from_buffer(buffer)
+        self._image.contents.data = ctypes.cast(
+            self._image_buffer, ctypes.c_void_p
+        )
+
+        self._xlib.XPutImage(
+            self._display, window_id, self._gc, self._image,
+            0, 0, 0, 0, width, height,
+        )
+        self._xlib.XFlush(self._display)
+
+    def _release_image(self) -> None:
+        """Free the XImage without letting Xlib free Python's buffer."""
+        if self._image is None:
+            return
+        # XDestroyImage would call free() on data, which Python owns.
+        self._image.contents.data = None
+        self._xlib.XDestroyImage(self._image)
+        self._image = None
+        self._image_size = None
+        self._image_buffer = None
 
     def _destroy_window(self, window: X11Window) -> None:
         """Destroy one window's server-side resources."""
