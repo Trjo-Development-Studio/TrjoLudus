@@ -376,6 +376,8 @@ Ordered by severity.
 | 2026-08-12 | X11 backend owns the display connection; windows own only their own X window | X delivers events per *connection*, and closing a display invalidates every window on it. The backend opens the connection when constructed and closes it in `shutdown()`; `X11Window.close()` destroys one window and never touches the connection |
 | 2026-08-12 | The X11 backend pumps the connection and files events per window | X has one event queue per connection, not per window, so draining it from one window would swallow another window's events. The backend routes each event to the window it names; `poll_events()` returns only that window's events |
 | 2026-08-12 | `tl.run()` still defaults to the null backend in Step 4 | Running on X11 means passing `Application(..., backend=X11Backend())` explicitly. Automatic per-platform selection is deliberately deferred, so Step 4 changes nothing above the platform layer |
+| 2026-08-12 | `examples/` becomes the Introduction & Tutorial project | One project rather than a separate tutorial tree, so there is nothing to duplicate or keep in sync. It answers "how do I make a game with TrjoLudus?"; `tests/` keeps answering "is TrjoLudus correct?", and is never weakened because a tutorial covers the same ground. See `examples/README.md` |
+| 2026-08-12 | Tutorial code may use the public API only | No `trjoludus.platform`, no `ctypes`, no private internals. A lesson that cannot be written without reaching past the public API is evidence the public API is unfinished, and the fix belongs in the engine. `examples/window_test.py` currently breaks this rule out of necessity and is therefore classified as an engine smoke test, to be replaced by a real first lesson once backend selection exists |
 
 ---
 

@@ -112,6 +112,13 @@ A runnable version of that is in [`examples/window_test.py`](examples/window_tes
 python examples/window_test.py
 ```
 
+## Learning TrjoLudus
+
+[`examples/`](examples/README.md) is the home of the **Introduction & Tutorial
+project** -- how to *use* the engine, as opposed to `tests/`, which verifies
+that the engine is *correct*. It grows as engine features land, and currently
+holds only the window smoke test above.
+
 ## Development
 
 ```sh
