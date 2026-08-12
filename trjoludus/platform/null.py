@@ -18,6 +18,7 @@ inject events.
 
 from collections.abc import Iterable
 
+from trjoludus.errors import PlatformError
 from trjoludus.events import Event
 from trjoludus.platform.base import PlatformBackend, PlatformWindow
 
@@ -141,14 +142,26 @@ class NullBackend(PlatformBackend):
     def create_window(self, title: str, width: int, height: int) -> NullWindow:
         """Create a simulated window.
 
-        Never fails: there is no operating system to refuse the request. The
-        backend imposes no limit on how many windows exist at once.
+        There is no operating system to refuse the request, so this fails only
+        after :meth:`shutdown`. That check exists for fidelity rather than
+        necessity: the real backends cannot create a window once their display
+        connection or window class is gone, and a stand-in that quietly
+        allowed it would let a test pass on code that breaks on Linux and
+        Windows.
+
+        The backend imposes no limit on how many windows exist at once.
 
         Args:
             title: Initial window title.
             width: Client-area width, in pixels.
             height: Client-area height, in pixels.
+
+        Raises:
+            PlatformError: If the backend has been shut down.
         """
+        if self._shut_down:
+            raise PlatformError("Cannot create a window after backend shutdown.")
+
         window = NullWindow(title, width, height)
         self._windows.append(window)
         return window

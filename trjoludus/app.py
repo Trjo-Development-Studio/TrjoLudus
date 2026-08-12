@@ -156,9 +156,16 @@ class Application:
                 if started:
                     self._game.on_stop()
             finally:
-                if window is not None:
-                    window.close()
-                self._backend.shutdown()
+                # Each step gets its own finally so a failure in one cannot
+                # skip the next. Closing the window and shutting the backend
+                # down release different resources -- an X display connection
+                # and a registered window class outlive the window that used
+                # them -- so a raising close() must not leak the backend.
+                try:
+                    if window is not None:
+                        window.close()
+                finally:
+                    self._backend.shutdown()
 
     def _loop(self, window) -> None:
         """Run frames until the game asks to stop."""

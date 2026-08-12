@@ -421,30 +421,47 @@ class TestTitlePropertiesOnServer(unittest.TestCase):
 
     NON_ASCII_TITLE = "TrjoLudus — X11 Test"
 
-    def setUp(self):
-        self.backend = X11Backend()
-        self.addCleanup(self.backend.shutdown)
+    @classmethod
+    def setUpClass(cls):
+        # One connection for the whole class. Each X connection is handed the
+        # same window-ID range, so opening and closing one per test makes a
+        # reused ID change owner repeatedly while xprop is trying to resolve
+        # it. Holding the connection keeps ownership unambiguous.
+        cls.backend = X11Backend()
+        cls.addClassCleanup(cls.backend.shutdown)
 
     def read_property(self, window, name, timeout=EVENT_TIMEOUT):
-        """Read a property, waiting for the server to have processed it.
+        """Read a property, retrying until the server can answer.
 
-        The backend uses XFlush, which pushes the request but does not wait
-        for the server to act on it, and xprop reads over its own connection.
-        Reading once therefore races: the property can legitimately not exist
-        yet. Retrying until it appears tests the value rather than the timing.
+        Two things make a single read unreliable, neither of them a bug in the
+        engine:
+
+        * The backend uses XFlush, which queues the request without waiting
+          for the server to act on it, so the property may not exist yet.
+        * xprop resolves the window ID over its own connection, and X reuses
+          IDs aggressively -- every fresh connection here is handed the same
+          one -- so a query can land while ownership is still settling and
+          come back BadWindow.
+
+        Retrying tests the value rather than the timing. A genuine failure
+        still surfaces, as the last response is reported.
         """
         deadline = time.monotonic() + timeout
-        last = ""
+        last = "<no response>"
         while time.monotonic() < deadline:
             result = subprocess.run(
                 ["xprop", "-id", str(window.window_id), name],
                 capture_output=True, text=True, timeout=30,
             )
-            last = result.stdout.strip()
-            if "=" in last:
-                return last
+            if result.returncode == 0 and "=" in result.stdout:
+                return result.stdout.strip()
+            last = (
+                f"rc={result.returncode} "
+                f"stdout={result.stdout.strip()!r} "
+                f"stderr={result.stderr.strip().splitlines()[:1]}"
+            )
             time.sleep(0.05)
-        return last
+        self.fail(f"xprop could not read {name} within {timeout}s: {last}")
 
     def test_net_wm_name_holds_the_exact_utf8_title(self):
         window = self.backend.create_window(self.NON_ASCII_TITLE, 200, 150)

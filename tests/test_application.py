@@ -18,9 +18,10 @@ from unittest import mock
 import trjoludus
 from trjoludus.app import DEFAULT_SIZE, DEFAULT_TITLE, Application, run
 from trjoludus.clock import Clock
+from trjoludus.errors import PlatformError
 from trjoludus.events import WindowCloseRequested, WindowResized
 from trjoludus.game import Game
-from trjoludus.platform.null import NullBackend
+from trjoludus.platform.null import NullBackend, NullWindow
 
 GRAPHICAL_ENV_VARS = ("DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE")
 PACKAGE_PARENT = str(Path(trjoludus.__file__).parent.parent)
@@ -469,6 +470,151 @@ class TestFailureCleanup(unittest.TestCase):
         with self.assertRaises(TestFailureCleanup.Boom):
             Application(Failing(quit_after=1), backend=backend, max_fps=None).run()
         self.assertTrue(backend.is_shut_down)
+
+
+class TestCleanupFailurePaths(unittest.TestCase):
+    """What happens when the cleanup steps themselves fail.
+
+    Each teardown step releases different resources -- a window handle, then a
+    display connection or a registered window class -- so one failing must not
+    skip the next.
+    """
+
+    class Boom(Exception):
+        pass
+
+    def test_backend_shutdown_runs_even_if_window_close_raises(self):
+        """Regression: close() raising used to leak the whole backend."""
+
+        class ExplodingWindow(NullWindow):
+            def close(self):
+                raise TestCleanupFailurePaths.Boom("close failed")
+
+        class Backend(RecordingBackend):
+            def create_window(self, title, width, height):
+                window = ExplodingWindow(title, width, height)
+                self._windows.append(window)
+                self.created.append(window)
+                return window
+
+        backend = Backend()
+        with self.assertRaises(self.Boom):
+            Application(RecordingGame(), backend=backend, max_fps=None).run()
+        self.assertTrue(backend.is_shut_down, "backend leaked")
+
+    def test_window_close_failure_propagates(self):
+        class ExplodingWindow(NullWindow):
+            def close(self):
+                raise TestCleanupFailurePaths.Boom("close failed")
+
+        class Backend(RecordingBackend):
+            def create_window(self, title, width, height):
+                window = ExplodingWindow(title, width, height)
+                self._windows.append(window)
+                return window
+
+        with self.assertRaises(self.Boom):
+            Application(RecordingGame(), backend=Backend(), max_fps=None).run()
+
+    def test_shutdown_failure_does_not_hide_the_original_error(self):
+        """A failing teardown chains onto the real error rather than erasing it."""
+
+        class Backend(RecordingBackend):
+            def shutdown(self):
+                raise TestCleanupFailurePaths.Boom("shutdown failed")
+
+        class Failing(RecordingGame):
+            def on_update(self, dt):
+                raise ValueError("the real problem")
+
+        with self.assertRaises(self.Boom) as caught:
+            Application(Failing(), backend=Backend(), max_fps=None).run()
+
+        causes = []
+        error = caught.exception
+        while error.__context__ is not None:
+            error = error.__context__
+            causes.append(error)
+        self.assertTrue(
+            any(isinstance(e, ValueError) for e in causes),
+            "the original ValueError is not reachable from the traceback",
+        )
+
+    def test_window_is_closed_before_the_backend_shuts_down(self):
+        order = []
+
+        class OrderedWindow(NullWindow):
+            def close(self):
+                order.append("window.close")
+                super().close()
+
+        class Backend(RecordingBackend):
+            def create_window(self, title, width, height):
+                window = OrderedWindow(title, width, height)
+                self._windows.append(window)
+                return window
+
+            def shutdown(self):
+                order.append("backend.shutdown")
+                super().shutdown()
+
+        Application(RecordingGame(), backend=Backend(), max_fps=None).run()
+        self.assertEqual(order, ["window.close", "backend.shutdown"])
+
+    def test_window_creation_failure_still_shuts_the_backend_down(self):
+        class Backend(RecordingBackend):
+            def create_window(self, title, width, height):
+                raise TestCleanupFailurePaths.Boom("no window")
+
+        backend = Backend()
+        with self.assertRaises(self.Boom):
+            Application(RecordingGame(), backend=backend, max_fps=None).run()
+        self.assertTrue(backend.is_shut_down)
+
+    def test_window_creation_failure_skips_on_start_and_on_stop(self):
+        class Backend(RecordingBackend):
+            def create_window(self, title, width, height):
+                raise TestCleanupFailurePaths.Boom("no window")
+
+        game = RecordingGame()
+        with self.assertRaises(self.Boom):
+            Application(game, backend=Backend(), max_fps=None).run()
+        self.assertEqual(game.calls, [])
+
+    def test_polling_failure_still_cleans_up(self):
+        class ExplodingWindow(NullWindow):
+            def poll_events(self):
+                raise TestCleanupFailurePaths.Boom("poll failed")
+
+        class Backend(RecordingBackend):
+            def create_window(self, title, width, height):
+                window = ExplodingWindow(title, width, height)
+                self._windows.append(window)
+                self.created.append(window)
+                return window
+
+        backend = Backend()
+        game = RecordingGame()
+        with self.assertRaises(self.Boom):
+            Application(game, backend=backend, max_fps=None).run()
+
+        self.assertTrue(backend.is_shut_down)
+        self.assertTrue(backend.created[0].is_closed)
+        self.assertIn("on_stop", game.calls)
+
+    def test_backend_creation_failure_leaves_nothing_to_clean_up(self):
+        """create_backend() raising happens before anything exists."""
+        game = RecordingGame()
+        app = Application(game, max_fps=None)
+        with mock.patch(
+            "trjoludus.app.create_backend",
+            side_effect=PlatformError("no backend"),
+        ):
+            with self.assertRaises(PlatformError):
+                app.run()
+
+        self.assertIsNone(app.backend)
+        self.assertEqual(game.calls, [])
 
 
 class TestClockIntegration(unittest.TestCase):
