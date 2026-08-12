@@ -15,8 +15,11 @@ integration tests talk to the real thing or do not run at all.
 
 import ctypes
 import os
+import shutil
+import subprocess
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from trjoludus.app import Application
@@ -25,7 +28,13 @@ from trjoludus.events import WindowCloseRequested, WindowResized
 from trjoludus.game import Game
 from trjoludus.platform.base import PlatformBackend, PlatformWindow
 from trjoludus.platform.linux import _xlib
-from trjoludus.platform.linux.x11 import BACKEND_NAME, X11Backend, X11Window
+from trjoludus.platform.linux.x11 import (
+    BACKEND_NAME,
+    X11Backend,
+    X11Window,
+    encode_legacy_title,
+    encode_utf8_title,
+)
 
 #: How long an integration test waits for the server to deliver an event.
 EVENT_TIMEOUT = 5.0
@@ -136,6 +145,56 @@ class TestDeclarations(unittest.TestCase):
         for name in ("XID", "Window", "Atom"):
             with self.subTest(type=name):
                 self.assertIs(getattr(_xlib, name), ctypes.c_ulong)
+
+
+class TestTitleEncoding(unittest.TestCase):
+    """Title encoding, checked without a display.
+
+    _NET_WM_NAME is UTF8_STRING and WM_NAME is ICCCM STRING (Latin-1). They
+    are different types, so they need different bytes; conflating them is what
+    produced mojibake.
+    """
+
+    def test_utf8_title_is_utf8(self):
+        self.assertEqual(encode_utf8_title("Hello"), b"Hello")
+        self.assertEqual(encode_utf8_title("åæø"), "åæø".encode("utf-8"))
+
+    def test_utf8_title_round_trips(self):
+        title = "TrjoLudus — X11 Test ✓"
+        self.assertEqual(encode_utf8_title(title).decode("utf-8"), title)
+
+    def test_legacy_title_is_latin1_not_utf8(self):
+        """The regression: an em dash must not become three Latin-1 chars."""
+        title = "TrjoLudus — X11 Test"
+        legacy = encode_legacy_title(title)
+
+        self.assertNotEqual(legacy, title.encode("utf-8"))
+        self.assertNotIn("â".encode("latin-1"), legacy)
+        # Valid Latin-1 by construction, so decoding per spec cannot fail.
+        legacy.decode("latin-1")
+
+    def test_legacy_title_keeps_latin1_representable_characters(self):
+        """Norwegian characters exist in Latin-1 and must survive intact."""
+        legacy = encode_legacy_title("Apex Horizon åæø")
+        self.assertEqual(legacy.decode("latin-1"), "Apex Horizon åæø")
+
+    def test_legacy_title_replaces_unrepresentable_characters(self):
+        self.assertEqual(encode_legacy_title("a — b").decode("latin-1"), "a ? b")
+        self.assertEqual(encode_legacy_title("✓").decode("latin-1"), "?")
+
+    def test_legacy_title_never_raises(self):
+        """Any title at all must produce a settable WM_NAME."""
+        for title in ("", "plain", "日本語", "emoji 🎮", "mixed åæø — ✓"):
+            with self.subTest(title=title):
+                self.assertIsInstance(encode_legacy_title(title), bytes)
+
+    def test_ascii_titles_are_identical_in_both_properties(self):
+        self.assertEqual(encode_utf8_title("Pong"), encode_legacy_title("Pong"))
+
+    def test_legacy_encoding_is_lossy_where_utf8_is_not(self):
+        title = "TrjoLudus — X11 Test"
+        self.assertEqual(encode_utf8_title(title).decode("utf-8"), title)
+        self.assertNotEqual(encode_legacy_title(title).decode("latin-1"), title)
 
 
 class TestLibraryLoading(unittest.TestCase):
@@ -348,6 +407,85 @@ class TestCloseRequest(unittest.TestCase):
              if isinstance(e, WindowCloseRequested)],
             [],
         )
+
+
+@requires_x11
+@unittest.skipUnless(shutil.which("xprop"), "xprop not installed")
+class TestTitlePropertiesOnServer(unittest.TestCase):
+    """Read the properties back off the server with an independent tool.
+
+    Each property is checked on its own. A correct _NET_WM_NAME says nothing
+    about WM_NAME -- they have different types, and it was WM_NAME that was
+    wrong.
+    """
+
+    NON_ASCII_TITLE = "TrjoLudus — X11 Test"
+
+    def setUp(self):
+        self.backend = X11Backend()
+        self.addCleanup(self.backend.shutdown)
+
+    def read_property(self, window, name):
+        result = subprocess.run(
+            ["xprop", "-id", str(window.window_id), name],
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.stdout.strip()
+
+    def test_net_wm_name_holds_the_exact_utf8_title(self):
+        window = self.backend.create_window(self.NON_ASCII_TITLE, 200, 150)
+        value = self.read_property(window, "_NET_WM_NAME")
+        self.assertIn("UTF8_STRING", value)
+        self.assertIn(self.NON_ASCII_TITLE, value)
+
+    def test_wm_name_is_a_latin1_string_without_mojibake(self):
+        window = self.backend.create_window(self.NON_ASCII_TITLE, 200, 150)
+        value = self.read_property(window, "WM_NAME")
+
+        self.assertIn("STRING", value)
+        self.assertNotIn("UTF8_STRING", value)
+        # The old bug rendered the em dash as "â" plus two more characters.
+        self.assertNotIn("â", value)
+        self.assertIn("TrjoLudus", value)
+        self.assertIn("X11 Test", value)
+
+    def test_latin1_representable_characters_survive_in_wm_name(self):
+        window = self.backend.create_window("Apex Horizon åæø", 200, 150)
+        value = self.read_property(window, "WM_NAME")
+        self.assertIn("åæø", value)
+        self.assertNotIn("Ã", value)  # the UTF-8-as-Latin-1 signature
+
+    def test_retitling_updates_both_properties(self):
+        window = self.backend.create_window("before", 200, 150)
+        window.title = "after — renamed"
+
+        self.assertIn("after — renamed", self.read_property(window, "_NET_WM_NAME"))
+        legacy = self.read_property(window, "WM_NAME")
+        self.assertIn("after", legacy)
+        self.assertNotIn("â", legacy)
+
+
+class TestDocumentationMatchesImplementation(unittest.TestCase):
+    """Guard the specific wording that was wrong."""
+
+    def architecture_text(self):
+        root = Path(__file__).resolve().parent.parent
+        return (root / "ARCHITECTURE.md").read_text(encoding="utf-8")
+
+    def test_io_error_handling_is_not_described_as_recoverable(self):
+        text = self.architecture_text()
+        self.assertIn("XSetIOErrorHandler", text)
+        self.assertNotIn(
+            "Xlib's default I/O error handler calls `exit(1)`,\n  bypassing all "
+            "Python cleanup. It must be installed before opening the display.",
+            text,
+            "the superseded, inaccurate claim is back",
+        )
+
+    def test_title_encodings_are_documented(self):
+        text = self.architecture_text()
+        for expected in ("_NET_WM_NAME", "WM_NAME", "UTF8_STRING", "8859-1"):
+            self.assertIn(expected, text)
 
 
 @requires_x11

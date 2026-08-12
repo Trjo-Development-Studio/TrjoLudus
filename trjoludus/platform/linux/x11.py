@@ -41,11 +41,36 @@ _error_handler_ref = None
 _io_error_handler_ref = None
 
 
+def encode_utf8_title(title: str) -> bytes:
+    """Encode a title for ``_NET_WM_NAME``, whose type is ``UTF8_STRING``.
+
+    This is the authoritative title: it is what modern window managers read,
+    and it represents any text losslessly.
+    """
+    return title.encode("utf-8")
+
+
+def encode_legacy_title(title: str) -> bytes:
+    """Encode a title for ``WM_NAME``, whose ICCCM type is ``STRING``.
+
+    ``STRING`` means ISO 8859-1, not UTF-8. Writing UTF-8 bytes into it -- as
+    an earlier version did -- is what produced mojibake: an em dash arrived as
+    the three bytes ``â€"``, and anything reading the property per spec decoded
+    them as three Latin-1 characters.
+
+    Characters outside Latin-1 have no representation here, so they become
+    ``?``. That is lossy but *valid*, which is the best a Latin-1 property can
+    do; the full text is always available in ``_NET_WM_NAME``.
+    """
+    return title.encode("latin-1", errors="replace")
+
+
 def _install_error_handlers(xlib) -> None:
     """Install the protocol and I/O error handlers, once per process.
 
-    Xlib's default I/O error handler terminates the process, so this must run
-    before any display is opened.
+    The I/O handler must be installed before any display is opened, since a
+    connection can die at any point after that. It makes the failure legible;
+    it cannot make the process survive it -- Xlib terminates either way.
     """
     global _error_handler_ref, _io_error_handler_ref
     if _io_error_handler_ref is not None:
@@ -53,10 +78,11 @@ def _install_error_handlers(xlib) -> None:
 
     @_xlib.IO_ERROR_HANDLER
     def on_io_error(display):
-        # Xlib exits the process after this returns, no matter what it
-        # returns -- the connection is already gone, so there is nothing to
-        # recover. All this handler can do is make the death legible instead
-        # of silent.
+        # Verified behaviour, not an assumption: this handler runs, and then
+        # Xlib terminates the process with status 1 regardless of what it
+        # returns. Python's atexit callbacks do not run, and execution does
+        # not resume. The connection is already gone, so there is nothing to
+        # recover; all this handler can do is make the death legible.
         print(
             "TrjoLudus: fatal X11 I/O error -- the connection to the display "
             "was lost (server exited, or the session ended). Xlib terminates "
@@ -263,13 +289,16 @@ class X11Backend(PlatformBackend):
     def _apply_title(self, window_id: int, title: str) -> None:
         """Set both the modern and legacy title properties.
 
-        ``_NET_WM_NAME`` with a ``UTF8_STRING`` is what current window
-        managers read, and is the only one of the two that is defined for
-        non-ASCII text. ``XStoreName`` sets the legacy ``WM_NAME`` as a
-        fallback for anything that has not been updated in twenty years.
+        The two properties have *different types* and therefore different
+        encodings, which is the whole point of doing this in two steps:
+
+        * ``_NET_WM_NAME`` is ``UTF8_STRING`` and holds the title losslessly.
+          This is what current window managers display.
+        * ``WM_NAME`` is ICCCM ``STRING``, meaning Latin-1, and gets a Latin-1
+          encoding. Writing UTF-8 here would be a type error that old clients
+          render as mojibake.
         """
-        raw = title.encode("utf-8")
-        self._xlib.XStoreName(self._display, window_id, raw)
+        utf8 = encode_utf8_title(title)
         self._xlib.XChangeProperty(
             self._display,
             window_id,
@@ -277,8 +306,13 @@ class X11Backend(PlatformBackend):
             self._utf8_string,
             _xlib.PROP_FORMAT_BYTE,
             _xlib.PROP_MODE_REPLACE,
-            raw,
-            len(raw),
+            utf8,
+            len(utf8),
+        )
+        # XStoreName writes WM_NAME with type STRING, so it must be given
+        # Latin-1 bytes rather than the UTF-8 above.
+        self._xlib.XStoreName(
+            self._display, window_id, encode_legacy_title(title)
         )
         self._xlib.XFlush(self._display)
 

@@ -164,8 +164,42 @@ Two are load-bearing and easy to overlook:
 - **`WM_DELETE_WINDOW`** -- without registering this atom, clicking the window's
   close button kills the X connection instead of delivering a closable event.
   On X11 this *is* "window closing".
-- **`XSetIOErrorHandler`** -- Xlib's default I/O error handler calls `exit(1)`,
-  bypassing all Python cleanup. It must be installed before opening the display.
+- **`XSetIOErrorHandler`** -- a fatal I/O error means the connection to the X
+  server is gone: the server exited, the session ended, or the socket broke.
+  Xlib's default handler prints to stderr and terminates the process.
+
+  Installing our own handler does **not** prevent that. This was verified
+  rather than assumed, by closing the connection's file descriptor and making
+  a request: our handler runs, and then Xlib terminates the process with
+  status 1 anyway. Execution does not resume, and Python's `atexit` callbacks
+  do not run -- so this is not a hook that can free resources or unwind.
+
+  What TrjoLudus therefore guarantees is narrow and worth stating plainly:
+  **the process still dies, but it says why first.** The handler writes a
+  diagnostic naming the lost display connection, so the failure is legible
+  instead of an unexplained exit. It is installed before any display is
+  opened, because a connection can die at any moment after that.
+
+  Recovering from this would need `XSetIOErrorExitHandler` (libX11 1.7+),
+  which is present on the development machine but not assumed to exist
+  everywhere. Nothing in the engine relies on surviving a lost connection.
+
+### Window titles use two properties with two encodings
+
+A title is written twice, because the two X properties have different types:
+
+| Property | Type | Encoding | Read by |
+| --- | --- | --- | --- |
+| `_NET_WM_NAME` | `UTF8_STRING` | UTF-8 | modern window managers |
+| `WM_NAME` | `STRING` | ISO 8859-1 | old ICCCM clients |
+
+`_NET_WM_NAME` is authoritative and lossless. `WM_NAME` is a Latin-1 property,
+so it gets Latin-1 bytes; characters with no Latin-1 form become `?`. That is
+lossy but valid, and the complete title is always in `_NET_WM_NAME`.
+
+Writing UTF-8 into `WM_NAME` is a type error, not a harmless shortcut: an em
+dash lands as three bytes that a conforming client decodes as three Latin-1
+characters, which is exactly the mojibake this split avoids.
 
 ---
 
