@@ -4,8 +4,8 @@ A lightweight, custom 2D game engine/framework created by **Trjo Development Stu
 written in Python and designed for Windows and Linux.
 
 > **Status: pre-alpha.** On Linux, `run()` opens a **real window**, draws
-> named image objects into it, moves them, destroys them, and waits for
-> keyboard input. A Windows backend exists but is **not yet verified on
+> named image objects into it, moves them, destroys them, draws a simple user
+> interface and waits for keyboard input. A Windows backend exists but is **not yet verified on
 > Windows**. Mouse, sound, collision and animation are not implemented yet.
 
 ## Philosophy
@@ -50,6 +50,10 @@ trjoludus/
     app.py             application and the engine-owned game loop
     game.py            Game base class
     create.py          creating persistent game objects
+    draw.py            drawing the user interface
+    color.py           named colours
+    ui.py              drawing lists
+    font.py            the built-in text font
     keyboard.py        waiting for key presses
     input.py           what wait() can wait for
     scene.py           named game objects and the scene holding them
@@ -116,7 +120,45 @@ live in [`examples/`](examples/README.md):
 ```sh
 python examples/image_test.py
 python examples/keyboard_test.py
+python examples/ui_test.py
 ```
+
+### Drawing a user interface
+
+```python
+from trjoludus import color, draw
+
+draw.rect(0, 0, 480, 24, color.blue)
+draw.text(8, 9, "Score: 0", color.white)
+draw.line(0, 24, 479, 24, color.white)
+```
+
+Like `create.image`, **what you draw stays drawn**: the engine remembers it and
+draws it every frame, so draw your interface once when the game starts rather
+than again on every update. `draw.clear()` throws it away.
+
+A colour is a `(red, green, blue)` tuple, so the named ones and your own both
+work: `color.black`, `color.white`, `color.red`, `color.green`, `color.blue`,
+`color.yellow`, `color.cyan`, `color.magenta`, `color.gray` -- or
+`(128, 40, 200)`.
+
+For a whole screen you want to switch on and off, give it a name:
+
+```python
+start_menu = draw.list("start_menu")
+start_menu.rect(150, 90, 180, 90, color.gray)
+start_menu.text(170, 110, "PAUSED", color.white)
+
+start_menu.hide()
+start_menu.show()
+```
+
+A list keeps what it holds until you `clear()` or `destroy()` it, and lists are
+drawn in the order they were made. Reusing a name is an error rather than a
+silent replacement. UI is drawn on top of the game's objects.
+
+Text uses a small built-in font, so it needs no font files: printable ASCII at
+5x7 pixels per character. See [`examples/ui_test.py`](examples/ui_test.py).
 
 ### Keyboard input
 

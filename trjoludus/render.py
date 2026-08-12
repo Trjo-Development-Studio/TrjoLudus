@@ -12,6 +12,8 @@ pixels and asked to show them.
 Pixels are BGRA, matching :mod:`trjoludus.image`; see that module for why.
 """
 
+from trjoludus import font
+
 __all__ = ["Framebuffer"]
 
 #: Bytes per pixel. BGRA.
@@ -76,6 +78,86 @@ class Framebuffer:
         red, green, blue = colour
         pattern = bytes((blue, green, red, 255))
         self._pixels[:] = pattern * (self._width * self._height)
+
+    def set_pixel(self, x: int, y: int, colour) -> None:
+        """Set one pixel, ignoring anything outside the buffer."""
+        if not (0 <= x < self._width and 0 <= y < self._height):
+            return
+        red, green, blue = colour
+        index = (y * self._width + x) * BYTES_PER_PIXEL
+        self._pixels[index] = blue
+        self._pixels[index + 1] = green
+        self._pixels[index + 2] = red
+        self._pixels[index + 3] = 255
+
+    def fill_rect(self, x: int, y: int, width: int, height: int, colour) -> None:
+        """Fill a rectangle, clipped to the buffer.
+
+        A rectangle with no area draws nothing rather than being an error: a
+        UI built from computed sizes will occasionally produce one, and it is
+        not a mistake worth stopping for.
+        """
+        left = max(0, x)
+        top = max(0, y)
+        right = min(self._width, x + width)
+        bottom = min(self._height, y + height)
+        if left >= right or top >= bottom:
+            return
+
+        red, green, blue = colour
+        row = bytes((blue, green, red, 255)) * (right - left)
+        span = len(row)
+        for line in range(top, bottom):
+            start = (line * self._width + left) * BYTES_PER_PIXEL
+            self._pixels[start:start + span] = row
+
+    def draw_line(self, x: int, y: int, end_x: int, end_y: int, colour) -> None:
+        """Draw a one-pixel line between two points, ends included.
+
+        Bresenham's algorithm: it steps in whole pixels, so a line never has
+        gaps and never needs floating point.
+
+        The endpoints are put in a fixed order first. Bresenham is not
+        symmetric on its own -- run from the other end, it rounds the other
+        way and lights slightly different pixels -- and a line that changes
+        depending on which end you name would be a surprise.
+        """
+        if (x, y) > (end_x, end_y):
+            x, y, end_x, end_y = end_x, end_y, x, y
+
+        dx = abs(end_x - x)
+        dy = -abs(end_y - y)
+        step_x = 1 if x < end_x else -1
+        step_y = 1 if y < end_y else -1
+        error = dx + dy
+
+        while True:
+            self.set_pixel(x, y, colour)
+            if x == end_x and y == end_y:
+                return
+            doubled = 2 * error
+            if doubled >= dy:
+                error += dy
+                x += step_x
+            if doubled <= dx:
+                error += dx
+                y += step_y
+
+    def draw_text(self, text: str, x: int, y: int, colour) -> None:
+        """Draw one line of text with the built-in font.
+
+        ``(x, y)`` is the top-left corner of the first character. Newlines are
+        not handled here: a game draws each line where it wants it.
+        """
+        pen = x
+        for character in text:
+            for column, bits in enumerate(font.columns_for(character)):
+                if not bits:
+                    continue
+                for row in range(font.CHARACTER_HEIGHT):
+                    if bits & (1 << row):
+                        self.set_pixel(pen + column, y + row, colour)
+            pen += font.CHARACTER_WIDTH + font.SPACING
 
     def draw_image(self, image, x: int, y: int) -> None:
         """Composite an image with its top-left corner at ``(x, y)``.

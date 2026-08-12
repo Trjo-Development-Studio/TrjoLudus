@@ -36,6 +36,7 @@ from trjoludus.platform.base import PlatformBackend
 from trjoludus.events import KeyPressed
 from trjoludus.render import Framebuffer
 from trjoludus.scene import current_scene
+from trjoludus.ui import current_ui
 
 __all__ = ["Application", "current_application", "run"]
 
@@ -179,6 +180,11 @@ class Application:
             self._window = window
             self._game.on_start()
             started = True
+            # Show what on_start built before running a single frame. The loop
+            # draws after on_update, so a game whose first update blocks --
+            # waiting for a key, say -- would otherwise sit on an empty window
+            # until the player pressed something, which looks broken.
+            self._render(window)
             self._loop(window)
         finally:
             from trjoludus.keyboard import key as _key
@@ -205,10 +211,12 @@ class Application:
                     try:
                         self._backend.shutdown()
                     finally:
-                        # The objects belonged to this run. Leaving them would
-                        # make a second run inherit the first game's scene,
-                        # and every name in it would then collide.
+                        # The objects and the UI belonged to this run.
+                        # Leaving them would make a second run inherit the
+                        # first game's scene and menus, and every name in
+                        # them would then collide.
                         current_scene().clear()
+                        current_ui().clear()
 
     def _loop(self, window) -> None:
         """Run frames until the game asks to stop."""
@@ -285,6 +293,9 @@ class Application:
         for obj in current_scene().objects():
             if obj.visible:
                 self._framebuffer.draw_image(obj.image, obj.x, obj.y)
+
+        # UI last, so it sits on top of the game rather than behind it.
+        current_ui().render(self._framebuffer)
 
         window.present(
             self._framebuffer.pixels,

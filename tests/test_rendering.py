@@ -309,8 +309,19 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
         return tuple(window.last_frame[i:i + 4])
 
     def test_frames_reach_the_backend(self):
+        """One frame per update, plus the one drawn before the loop starts."""
         window = self.run_game(lambda: None, frames=3)
-        self.assertEqual(window.frames_presented, 3)
+        self.assertEqual(window.frames_presented, 3 + 1)
+
+    def test_the_first_frame_is_drawn_before_any_update(self):
+        """Otherwise a game whose first update blocks shows an empty window."""
+        seen = []
+
+        def start():
+            seen.append("started")
+
+        window = self.run_game(start, frames=1)
+        self.assertGreaterEqual(window.frames_presented, 2)
 
     def test_frames_match_the_window_size(self):
         window = self.run_game(lambda: None, size=(20, 10))
@@ -477,7 +488,7 @@ class TestRenderingThroughTheApplication(unittest.TestCase):
         tl.Application(G(), size=(16, 12), max_fps=None,
                        backend=Backend()).run()
         window = windows[0]
-        self.assertEqual(window.frames_presented, 4)
+        self.assertEqual(window.frames_presented, 4 + 1)  # + the initial frame
         self.assertEqual(self.pixel(window, 0, 0), (blue, green, red, 255))
 
     def test_destroying_one_object_leaves_another_drawn(self):
