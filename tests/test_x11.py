@@ -15,8 +15,6 @@ integration tests talk to the real thing or do not run at all.
 
 import ctypes
 import os
-import shutil
-import subprocess
 import time
 import unittest
 from pathlib import Path
@@ -260,6 +258,32 @@ class TestContractConformance(unittest.TestCase):
         self.assertFalse(hasattr(X11Window, "simulate_event"))
 
 
+class TestProtocolErrorRecord(unittest.TestCase):
+    """The diagnostic record must not grow without bound."""
+
+    def test_history_is_bounded(self):
+        from trjoludus.platform.linux import x11
+
+        self.assertEqual(
+            x11.protocol_errors.maxlen, x11.PROTOCOL_ERROR_HISTORY
+        )
+
+    def test_oldest_entries_are_discarded(self):
+        from trjoludus.platform.linux import x11
+
+        record = x11.protocol_errors
+        saved = list(record)
+        record.clear()
+        try:
+            for i in range(x11.PROTOCOL_ERROR_HISTORY + 20):
+                record.append((i, 0, 0))
+            self.assertEqual(len(record), x11.PROTOCOL_ERROR_HISTORY)
+            self.assertEqual(record[-1], (x11.PROTOCOL_ERROR_HISTORY + 19, 0, 0))
+        finally:
+            record.clear()
+            record.extend(saved)
+
+
 class TestErrorHandlerLifetime(unittest.TestCase):
     """Xlib holds raw pointers to these; Python must keep them alive."""
 
@@ -410,90 +434,120 @@ class TestCloseRequest(unittest.TestCase):
 
 
 @requires_x11
-@unittest.skipUnless(shutil.which("xprop"), "xprop not installed")
 class TestTitlePropertiesOnServer(unittest.TestCase):
-    """Read the properties back off the server with an independent tool.
+    """Read the title properties back off the server as raw bytes.
+
+    These used to shell out to xprop, which had two problems. It resolves the
+    window ID over its *own* connection, and X reuses IDs aggressively --
+    every fresh connection here is handed the same one -- so a query could
+    land while ownership was still settling and return BadWindow. And xprop
+    transcodes property values into the terminal's locale before printing
+    them, so it could not show what was actually stored, which is the entire
+    point of these tests.
+
+    Reading over the connection that set the property fixes both. X processes
+    one connection's requests in order, so a read issued after a write always
+    observes it -- deterministic with no sleeps, no retries, and nothing added
+    to production code.
 
     Each property is checked on its own. A correct _NET_WM_NAME says nothing
-    about WM_NAME -- they have different types, and it was WM_NAME that was
+    about WM_NAME: they have different types, and it was WM_NAME that was
     wrong.
     """
 
     NON_ASCII_TITLE = "TrjoLudus — X11 Test"
 
-    @classmethod
-    def setUpClass(cls):
-        # One connection for the whole class. Each X connection is handed the
-        # same window-ID range, so opening and closing one per test makes a
-        # reused ID change owner repeatedly while xprop is trying to resolve
-        # it. Holding the connection keeps ownership unambiguous.
-        cls.backend = X11Backend()
-        cls.addClassCleanup(cls.backend.shutdown)
+    def setUp(self):
+        self.backend = X11Backend()
+        self.addCleanup(self.backend.shutdown)
 
-    def read_property(self, window, name, timeout=EVENT_TIMEOUT):
-        """Read a property, retrying until the server can answer.
+    def read_property(self, window, name):
+        """Return ``(type_atom_name, raw_bytes)`` for a window property."""
+        xlib = self.backend._xlib
+        display = self.backend._display
+        prop_atom = xlib.XInternAtom(display, name.encode("ascii"), False)
 
-        Two things make a single read unreliable, neither of them a bug in the
-        engine:
+        actual_type = _xlib.Atom()
+        actual_format = ctypes.c_int()
+        item_count = ctypes.c_ulong()
+        bytes_after = ctypes.c_ulong()
+        data = ctypes.POINTER(ctypes.c_ubyte)()
 
-        * The backend uses XFlush, which queues the request without waiting
-          for the server to act on it, so the property may not exist yet.
-        * xprop resolves the window ID over its own connection, and X reuses
-          IDs aggressively -- every fresh connection here is handed the same
-          one -- so a query can land while ownership is still settling and
-          come back BadWindow.
+        status = xlib.XGetWindowProperty(
+            display, window.window_id, prop_atom,
+            0, 65536, False, _xlib.ANY_PROPERTY_TYPE,
+            ctypes.byref(actual_type), ctypes.byref(actual_format),
+            ctypes.byref(item_count), ctypes.byref(bytes_after),
+            ctypes.byref(data),
+        )
+        self.assertEqual(status, 0, f"XGetWindowProperty failed for {name}")
+        self.assertTrue(data, f"{name} is not set on the window")
+        try:
+            raw = bytes(bytearray(data[i] for i in range(item_count.value)))
+        finally:
+            xlib.XFree(data)
 
-        Retrying tests the value rather than the timing. A genuine failure
-        still surfaces, as the last response is reported.
-        """
-        deadline = time.monotonic() + timeout
-        last = "<no response>"
-        while time.monotonic() < deadline:
-            result = subprocess.run(
-                ["xprop", "-id", str(window.window_id), name],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode == 0 and "=" in result.stdout:
-                return result.stdout.strip()
-            last = (
-                f"rc={result.returncode} "
-                f"stdout={result.stdout.strip()!r} "
-                f"stderr={result.stderr.strip().splitlines()[:1]}"
-            )
-            time.sleep(0.05)
-        self.fail(f"xprop could not read {name} within {timeout}s: {last}")
+        return self.atom_name(actual_type.value), raw
 
-    def test_net_wm_name_holds_the_exact_utf8_title(self):
+    def atom_name(self, atom):
+        """Map an atom back to a name, for the two types used here."""
+        xlib = self.backend._xlib
+        display = self.backend._display
+        for candidate in ("UTF8_STRING", "STRING"):
+            if atom == xlib.XInternAtom(display, candidate.encode(), False):
+                return candidate
+        return f"atom:{atom}"
+
+    def test_net_wm_name_is_utf8_and_holds_the_exact_title(self):
         window = self.backend.create_window(self.NON_ASCII_TITLE, 200, 150)
-        value = self.read_property(window, "_NET_WM_NAME")
-        self.assertIn("UTF8_STRING", value)
-        self.assertIn(self.NON_ASCII_TITLE, value)
+        type_name, raw = self.read_property(window, "_NET_WM_NAME")
 
-    def test_wm_name_is_a_latin1_string_without_mojibake(self):
+        self.assertEqual(type_name, "UTF8_STRING")
+        self.assertEqual(raw, self.NON_ASCII_TITLE.encode("utf-8"))
+        self.assertEqual(raw.decode("utf-8"), self.NON_ASCII_TITLE)
+
+    def test_wm_name_is_a_string_property_holding_latin1_bytes(self):
+        """The regression, checked on the bytes rather than a rendering."""
         window = self.backend.create_window(self.NON_ASCII_TITLE, 200, 150)
-        value = self.read_property(window, "WM_NAME")
+        type_name, raw = self.read_property(window, "WM_NAME")
 
-        self.assertIn("STRING", value)
-        self.assertNotIn("UTF8_STRING", value)
-        # The old bug rendered the em dash as "â" plus two more characters.
-        self.assertNotIn("â", value)
-        self.assertIn("TrjoLudus", value)
-        self.assertIn("X11 Test", value)
+        self.assertEqual(type_name, "STRING")
+        # The bug stored UTF-8 here; the em dash would appear as e2 80 94.
+        self.assertNotIn(b"\xe2\x80\x94", raw)
+        self.assertEqual(raw, "TrjoLudus ? X11 Test".encode("latin-1"))
+        raw.decode("latin-1")  # valid by construction
 
-    def test_latin1_representable_characters_survive_in_wm_name(self):
+    def test_latin1_representable_characters_are_stored_as_latin1(self):
+        """åæø exist in Latin-1, so they must be one byte each, not two."""
         window = self.backend.create_window("Apex Horizon åæø", 200, 150)
-        value = self.read_property(window, "WM_NAME")
-        self.assertIn("åæø", value)
-        self.assertNotIn("Ã", value)  # the UTF-8-as-Latin-1 signature
+        type_name, raw = self.read_property(window, "WM_NAME")
+
+        self.assertEqual(type_name, "STRING")
+        self.assertEqual(raw, b"Apex Horizon \xe5\xe6\xf8")
+        # The old bug stored the UTF-8 encoding instead.
+        self.assertNotEqual(raw, "Apex Horizon åæø".encode("utf-8"))
+        self.assertEqual(raw.decode("latin-1"), "Apex Horizon åæø")
+
+    def test_the_two_properties_disagree_by_design(self):
+        """Same title, different encodings, because the types differ."""
+        window = self.backend.create_window("Apex Horizon åæø", 200, 150)
+        _, utf8 = self.read_property(window, "_NET_WM_NAME")
+        _, latin1 = self.read_property(window, "WM_NAME")
+
+        self.assertNotEqual(utf8, latin1)
+        self.assertEqual(utf8.decode("utf-8"), latin1.decode("latin-1"))
 
     def test_retitling_updates_both_properties(self):
         window = self.backend.create_window("before", 200, 150)
         window.title = "after — renamed"
 
-        self.assertIn("after — renamed", self.read_property(window, "_NET_WM_NAME"))
-        legacy = self.read_property(window, "WM_NAME")
-        self.assertIn("after", legacy)
-        self.assertNotIn("â", legacy)
+        type_name, utf8 = self.read_property(window, "_NET_WM_NAME")
+        self.assertEqual(type_name, "UTF8_STRING")
+        self.assertEqual(utf8.decode("utf-8"), "after — renamed")
+
+        type_name, latin1 = self.read_property(window, "WM_NAME")
+        self.assertEqual(type_name, "STRING")
+        self.assertEqual(latin1, "after ? renamed".encode("latin-1"))
 
 
 class TestDocumentationMatchesImplementation(unittest.TestCase):
@@ -582,6 +636,7 @@ class TestApplicationOnX11(unittest.TestCase):
             def __init__(self):
                 self.frames = 0
                 self.closed = False
+                self.deadline = None
 
             def on_event(self, event):
                 if isinstance(event, WindowCloseRequested):
@@ -603,7 +658,12 @@ class TestApplicationOnX11(unittest.TestCase):
                     xlib.XSendEvent(
                         backend._display, window.window_id, False, 0, event)
                     xlib.XFlush(backend._display)
-                if self.frames > 300:
+                    self.deadline = time.monotonic() + EVENT_TIMEOUT
+                # The give-up condition has to be a real timeout. This loop is
+                # unpaced, so a frame count is no measure of elapsed time: a
+                # few hundred frames pass in well under a millisecond, which
+                # is quicker than the server can round-trip the message back.
+                if self.deadline is not None and time.monotonic() > self.deadline:
                     self.quit()
 
         game = Closing()

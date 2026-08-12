@@ -342,12 +342,25 @@ class TestWin32Integration(unittest.TestCase):
         self.assertTrue(any(isinstance(e, WindowCloseRequested) for e in seen))
 
     def test_close_request_does_not_destroy_the_window(self):
+        """DefWindowProcW would destroy it; answering WM_CLOSE must not."""
         import time
 
         window = self.backend.create_window("test", 200, 150)
         self.backend._user32.PostMessageW(window.hwnd, _user32.WM_CLOSE, 0, 0)
-        time.sleep(0.2)
-        list(window.poll_events())
+
+        # Wait for the request to actually arrive rather than sleeping a fixed
+        # interval and hoping. Asserting the negative only means something
+        # once the positive has happened.
+        deadline = time.monotonic() + 5.0
+        arrived = False
+        while time.monotonic() < deadline and not arrived:
+            arrived = any(
+                isinstance(e, WindowCloseRequested) for e in window.poll_events()
+            )
+            if not arrived:
+                time.sleep(0.01)
+
+        self.assertTrue(arrived, "close request never arrived")
         self.assertFalse(window.is_closed)
 
     def test_resize_produces_a_window_resized_event(self):

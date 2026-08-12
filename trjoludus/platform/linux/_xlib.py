@@ -80,6 +80,9 @@ PROP_FORMAT_BYTE = 8
 #: Format code used by WM_PROTOCOLS client messages.
 CLIENT_MESSAGE_FORMAT_LONG = 32
 
+#: Passed to XGetWindowProperty to accept whatever type a property has.
+ANY_PROPERTY_TYPE = 0
+
 
 # --- event structures ----------------------------------------------------
 
@@ -221,11 +224,19 @@ FUNCTION_SIGNATURES: dict[str, tuple[list, object]] = {
     "XSetErrorHandler": ([ERROR_HANDLER], c_void_p),
     "XSetIOErrorHandler": ([IO_ERROR_HANDLER], c_void_p),
     # Used only to drive integration tests: XSendEvent synthesises the
-    # WM_DELETE_WINDOW a window manager would send, and XResizeWindow
-    # triggers a real ConfigureNotify. Declaring them here keeps every Xlib
-    # prototype in one audited place rather than duplicated into a test.
+    # WM_DELETE_WINDOW a window manager would send, XResizeWindow triggers a
+    # real ConfigureNotify, and XGetWindowProperty reads a property back as
+    # raw bytes. Declaring them here keeps every Xlib prototype in one audited
+    # place rather than duplicated into a test.
     "XSendEvent": ([Display, Window, Bool, c_long, POINTER(XEvent)], c_int),
     "XResizeWindow": ([Display, Window, c_uint, c_uint], c_int),
+    "XGetWindowProperty": (
+        [Display, Window, Atom, c_long, c_long, Bool, Atom,
+         POINTER(Atom), POINTER(c_int), POINTER(c_ulong), POINTER(c_ulong),
+         POINTER(POINTER(c_ubyte))],
+        c_int,
+    ),
+    "XFree": ([c_void_p], c_int),
 }
 
 #: The Xlib shared object. Resolved through ctypes' normal search first.

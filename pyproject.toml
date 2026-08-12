@@ -11,7 +11,7 @@ license = "MIT"
 authors = [{ name = "Trjo Development Studio" }]
 keywords = ["game", "engine", "2d", "gamedev"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Operating System :: Microsoft :: Windows",
@@ -27,7 +27,8 @@ dependencies = []
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/trjo/TrjoLudus"
+Homepage = "https://github.com/Trjo-Development-Studio/TrjoLudus"
+Source = "https://github.com/Trjo-Development-Studio/TrjoLudus"
 
 [tool.setuptools.dynamic]
 version = { attr = "trjoludus.__version__" }

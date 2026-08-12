@@ -3,11 +3,10 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** Milestone 1 is essentially complete on Linux:
-> `tl.run()` opens a **real window**, runs the engine-owned loop with frame
-> timing, delivers platform-neutral events and shuts down cleanly. A Windows
-> backend exists but is **not yet verified on Windows**. Rendering is not
-> implemented at all.
+> **Status: pre-alpha.** Milestone 1 is complete on Linux: `tl.run()` opens a
+> **real window**, runs the engine-owned loop with frame timing, delivers
+> platform-neutral events and shuts down cleanly. A Windows backend exists but
+> is **not yet verified on Windows**. Rendering is not implemented at all.
 
 ## Philosophy
 
@@ -139,6 +138,18 @@ holds only the window smoke test above.
 python -m unittest discover -s tests
 ```
 
+Tests that need a real window are skipped when there is nothing to open them
+on, so it is worth checking the headless path too -- it is what proves the
+engine does not quietly depend on a display:
+
+```sh
+env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u XDG_SESSION_TYPE \
+    python -m unittest discover -s tests
+```
+
+That run should report skips. If it reports none, a test found a display it
+should not have.
+
 ## Roadmap
 
 The initial engine targets 2D only. 3D is explicitly out of scope and may be
@@ -147,7 +158,7 @@ considered much later.
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | 0 | Project foundation, platform detection | done |
-| 1 | Window creation + game loop | in progress |
+| 1 | Window creation + game loop | done (Linux; Windows unverified) |
 | 2 | Keyboard and mouse input | planned |
 | 3 | 2D shape rendering | planned |
 | 4 | Images / textures | planned |

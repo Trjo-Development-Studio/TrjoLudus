@@ -17,6 +17,7 @@ events.
 """
 
 import sys
+from collections import deque
 from collections.abc import Iterable
 
 from trjoludus.errors import PlatformError
@@ -29,10 +30,17 @@ __all__ = ["X11Backend", "X11Window"]
 #: Identifier for this backend.
 BACKEND_NAME = "x11"
 
-#: Protocol errors seen since the process started, most recent last. X protocol
-#: errors are asynchronous, so they cannot be raised at the call site; they are
-#: recorded here and written to stderr instead of vanishing.
-protocol_errors: list[tuple[int, int, int]] = []
+#: How many recent protocol errors to keep. X protocol errors are reported
+#: asynchronously, so a single mistake in a loop can produce one per frame;
+#: an unbounded record would grow without limit in exactly the situation
+#: someone is trying to debug.
+PROTOCOL_ERROR_HISTORY = 64
+
+#: Protocol errors seen recently, most recent last, as
+#: ``(error_code, request_code, minor_code)``. They cannot be raised at the
+#: call site because they arrive asynchronously, so they are kept here for
+#: inspection and written to stderr rather than vanishing.
+protocol_errors: deque[tuple[int, int, int]] = deque(maxlen=PROTOCOL_ERROR_HISTORY)
 
 # Xlib keeps raw C function pointers to these handlers, so Python must hold a
 # reference for as long as Xlib might call them. Letting either be collected
