@@ -15,6 +15,7 @@ from trjoludus.errors import (
     TrjoLudusError,
     UnsupportedPlatformError,
 )
+from trjoludus.events import Event, WindowCloseRequested, WindowResized
 from trjoludus.platform import PlatformName, detect_platform
 
 __version__ = "0.0.1"
@@ -25,6 +26,10 @@ __all__ = [
     "TrjoLudusError",
     "PlatformError",
     "UnsupportedPlatformError",
+    # Events
+    "Event",
+    "WindowCloseRequested",
+    "WindowResized",
     # Platform
     "PlatformName",
     "detect_platform",

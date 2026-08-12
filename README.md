@@ -3,8 +3,9 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** Only the project foundation exists. There is no window,
-> renderer or game loop yet.
+> **Status: pre-alpha.** Milestone 1 is in progress. The platform-neutral
+> foundation -- events, frame timing and the backend contracts -- is in place;
+> there is no window, game loop or renderer yet.
 
 ## Philosophy
 
@@ -46,7 +47,11 @@ reasoning behind them.
 trjoludus/
     __init__.py        public API surface
     errors.py          exception hierarchy
-    platform/          OS detection and, later, OS backends
+    events.py          platform-neutral event types
+    clock.py           frame timing
+    platform/
+        __init__.py    OS detection
+        base.py        backend contracts
 tests/                 stdlib unittest suite
 ```
 
@@ -77,7 +82,7 @@ considered much later.
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | 0 | Project foundation, platform detection | done |
-| 1 | Window creation + game loop | next |
+| 1 | Window creation + game loop | in progress |
 | 2 | Keyboard and mouse input | planned |
 | 3 | 2D shape rendering | planned |
 | 4 | Images / textures | planned |
