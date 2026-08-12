@@ -25,8 +25,13 @@ Engine implementation       <- Python today; possibly Rust/C++ later
     |
 Platform layer              <- the only OS-aware code
     |
-Windows (Win32)   /   Linux (Xlib)
+Windows (Win32)   /   Linux (Xlib initially, native Wayland later)
 ```
+
+Backends are plural and additive. Xlib is the *first* Linux backend, not the
+only one TrjoLudus will ever have; a native Wayland backend is expected to sit
+alongside it, selected at runtime. Nothing above the platform layer should ever
+need to change when that happens.
 
 Two rules keep this honest:
 
@@ -95,10 +100,14 @@ milestones, not for Milestone 1.
 
 ---
 
-## 3. Linux: Xlib via ctypes, through Xwayland
+## 3. Linux: Xlib via ctypes, through Xwayland (initial backend)
 
-**Decision: use Xlib.** Native Wayland is a later, separately-scoped backend
-behind the same interface.
+**Decision: the *first* Linux backend uses Xlib.** This is a starting point
+chosen for what is achievable now, not a permanent commitment to X11. A native
+Wayland backend is expected to be added later, behind the same interface and
+selected at runtime; Xlib then becomes the fallback rather than the only path.
+The `TRJOLUDUS_BACKEND` environment override exists partly so a second Linux
+backend can be developed and tested side by side with the first.
 
 Wayland has won the *session*, but that does not make X11 unavailable -- it
 means X11 clients are served by **Xwayland**, which mutter starts
@@ -272,6 +281,12 @@ class Game:
 tl.run(game, *, title="TrjoLudus", size=(1280, 720), max_fps=60) -> None
 ```
 
+**There is deliberately no `on_draw()` yet.** Milestone 1 has no renderer, so a
+draw hook would have nothing to call into. It arrives in **Milestone 3 (2D
+shape rendering)**, per the roadmap in the README -- Milestone 2 is keyboard and
+mouse input. Adding it then is purely additive: games written against the
+Milestone 1 API keep working untouched, because they simply do not override it.
+
 Events are platform-neutral frozen dataclasses. Milestone 1 produces exactly
 two:
 
@@ -341,7 +356,7 @@ Ordered by severity.
 | 2026-08-12 | No Pygame; no third-party engine or framework | Build it ourselves; the engine is the point |
 | 2026-08-12 | Raw OS APIs via `ctypes`; no runtime dependencies | Keeps the platform layer thin and replaceable |
 | 2026-08-12 | Flat package layout, `main` branch | Simplicity |
-| 2026-08-12 | Linux backend: Xlib via Xwayland | Works today; native Wayland has three hard blockers (section 3) |
+| 2026-08-12 | **Initial** Linux backend: Xlib via Xwayland | Works today; native Wayland has three hard blockers (section 3). A native Wayland backend is expected later, alongside rather than replacing this one |
 | 2026-08-12 | Xlib rather than XCB | Documentation and simplicity; `XEvent` risk is manageable |
 | 2026-08-12 | Windows backend: `user32` + `kernel32`, `W` variants | The only real option |
 | 2026-08-12 | Pull-based backend event interface | Normalises Windows' push model at the lowest level |
@@ -349,7 +364,7 @@ Ordered by severity.
 | 2026-08-12 | Games subclass `tl.Game` with `on_*` methods | Consistent naming, natural home for state, AI-legible |
 | 2026-08-12 | Variable `dt`, clamped; `max_fps=60` default | Avoids pinning a core with no vsync; fixed timestep can be added later without API change |
 | 2026-08-12 | Headless `null` backend, built before any OS code | Proves the loop with zero platform code; runs in CI and without a display |
-| 2026-08-12 | `on_draw()` deferred to Milestone 3 | Adding a hook to a base class later is purely additive, so there is no churn to avoid |
+| 2026-08-12 | `on_draw()` deferred to Milestone 3 (2D shape rendering) | Adding a hook to a base class later is purely additive -- existing games simply do not override it -- so there is no churn to avoid by adding it early |
 | 2026-08-12 | 3D is out of scope | 2D engine first; revisit much later |
 
 ---

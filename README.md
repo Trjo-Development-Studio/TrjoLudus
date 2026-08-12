@@ -29,7 +29,7 @@ Engine implementation       <- Python today; possibly Rust/C++ later
     |
 Platform layer              <- the only OS-aware code
     |
-Windows (Win32)   /   Linux (X11)
+Windows (Win32)   /   Linux (Xlib initially, native Wayland later)
 ```
 
 All operating-system knowledge lives in `trjoludus/platform/`. No other module
