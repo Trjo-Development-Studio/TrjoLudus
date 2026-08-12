@@ -8,6 +8,8 @@ to break by accident, so they are checked mechanically rather than by review.
 """
 
 import ast
+import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -95,6 +97,35 @@ class TestArchitecturalRules(unittest.TestCase):
         tree = ast.parse((PLATFORM_ROOT / "null.py").read_text(encoding="utf-8"))
         allowed = set(sys.stdlib_module_names) | {"trjoludus"}
         self.assertEqual(imported_module_names(tree) - allowed, set())
+
+    def test_linux_backend_imports_only_stdlib_and_trjoludus(self):
+        """The X11 backend must add no third-party dependency either."""
+        allowed = set(sys.stdlib_module_names) | {"trjoludus"}
+        for path in sorted((PLATFORM_ROOT / "linux").rglob("*.py")):
+            with self.subTest(module=path.name):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                self.assertEqual(imported_module_names(tree) - allowed, set())
+
+    def test_importing_trjoludus_does_not_load_a_real_backend(self):
+        """Importing the engine must not open a display or load Xlib."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys, trjoludus\n"
+                "loaded = [m for m in sys.modules\n"
+                "          if 'platform.linux' in m or 'platform.windows' in m\n"
+                "          or m.split('.')[0] == 'ctypes']\n"
+                "assert not loaded, loaded\n"
+                "print('ok')\n",
+            ],
+            env={**os.environ, "PYTHONPATH": str(PACKAGE_ROOT.parent)},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "ok")
 
 
 class TestCheckerItself(unittest.TestCase):

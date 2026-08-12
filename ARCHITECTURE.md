@@ -373,6 +373,9 @@ Ordered by severity.
 | 2026-08-12 | `tl.run()` defaults to the null backend | Development-stage behaviour only: no real backend exists yet, so a window is simulated and never closes itself. Real per-platform selection arrives with the X11 and Win32 backends |
 | 2026-08-12 | `Application` is public alongside `tl.run()` | `tl.run()` stays the simple entry point; `Application` gives an explicit API and the testing seam, including direct backend injection |
 | 2026-08-12 | `Game.quit_requested` is a public read-only property | `Game` owns the shutdown request through `quit()`; `Application` only observes it. Keeps the application off `Game`'s private state, and leaves exactly one way to request a stop |
+| 2026-08-12 | X11 backend owns the display connection; windows own only their own X window | X delivers events per *connection*, and closing a display invalidates every window on it. The backend opens the connection when constructed and closes it in `shutdown()`; `X11Window.close()` destroys one window and never touches the connection |
+| 2026-08-12 | The X11 backend pumps the connection and files events per window | X has one event queue per connection, not per window, so draining it from one window would swallow another window's events. The backend routes each event to the window it names; `poll_events()` returns only that window's events |
+| 2026-08-12 | `tl.run()` still defaults to the null backend in Step 4 | Running on X11 means passing `Application(..., backend=X11Backend())` explicitly. Automatic per-platform selection is deliberately deferred, so Step 4 changes nothing above the platform layer |
 
 ---
 

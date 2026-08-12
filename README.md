@@ -3,10 +3,10 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** Milestone 1 is in progress. The engine has a complete
-> application and game lifecycle -- events, frame timing, backend contracts and
-> an engine-owned loop -- and runs headlessly on the null backend. Real windows
-> (X11, Win32) and rendering are not implemented yet.
+> **Status: pre-alpha.** Milestone 1 is in progress. TrjoLudus opens **real
+> windows on Linux** through Xlib, with an engine-owned loop, frame timing and
+> platform-neutral events. The Windows backend and all rendering are not
+> implemented yet.
 
 ## Philosophy
 
@@ -56,6 +56,10 @@ trjoludus/
         __init__.py    OS detection
         base.py        backend contracts
         null.py        headless backend, for tests and CI
+        linux/
+            _xlib.py   raw Xlib ctypes declarations
+            x11.py     X11 backend
+examples/              runnable examples
 tests/                 stdlib unittest suite
 ```
 
@@ -89,10 +93,24 @@ tl.run(MyGame(), title="My Game", size=(800, 600))
 The engine owns the loop; a game supplies callbacks. Closing the window is a
 *request* -- a game that wants to honour it calls `quit()`, as above.
 
-> **Milestone 1 caveat.** `run()` currently uses the headless null backend, so
-> no window appears and no close event ever arrives. A game must call `quit()`
-> itself or it will run forever. Real windows arrive with the X11 and Win32
-> backends.
+> **Milestone 1 caveat.** `run()` still uses the headless null backend, so no
+> window appears and no close event ever arrives. Automatic backend selection
+> is not implemented yet.
+
+To open a real window on Linux, pass the X11 backend explicitly:
+
+```python
+from trjoludus.platform.linux import X11Backend
+
+tl.Application(MyGame(), title="My Game", size=(800, 600),
+               backend=X11Backend()).run()
+```
+
+A runnable version of that is in [`examples/window_test.py`](examples/window_test.py):
+
+```sh
+python examples/window_test.py
+```
 
 ## Development
 
