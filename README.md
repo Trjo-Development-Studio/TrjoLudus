@@ -3,9 +3,10 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** Milestone 1 is in progress. The platform-neutral
-> foundation -- events, frame timing and the backend contracts -- is in place;
-> there is no window, game loop or renderer yet.
+> **Status: pre-alpha.** Milestone 1 is in progress. The engine has a complete
+> application and game lifecycle -- events, frame timing, backend contracts and
+> an engine-owned loop -- and runs headlessly on the null backend. Real windows
+> (X11, Win32) and rendering are not implemented yet.
 
 ## Philosophy
 
@@ -46,6 +47,8 @@ reasoning behind them.
 ```
 trjoludus/
     __init__.py        public API surface
+    app.py             application and the engine-owned game loop
+    game.py            Game base class
     errors.py          exception hierarchy
     events.py          platform-neutral event types
     clock.py           frame timing
@@ -63,11 +66,33 @@ Python 3.11 or newer. Nothing else.
 ## Usage
 
 ```python
-import trjoludus
+import trjoludus as tl
 
-print(trjoludus.__version__)        # 0.0.1
-print(trjoludus.detect_platform())  # linux
+
+class MyGame(tl.Game):
+    def on_start(self):
+        self.elapsed = 0.0
+
+    def on_event(self, event):
+        if isinstance(event, tl.WindowCloseRequested):
+            self.quit()
+
+    def on_update(self, dt):
+        self.elapsed += dt
+        if self.elapsed > 1.0:
+            self.quit()
+
+
+tl.run(MyGame(), title="My Game", size=(800, 600))
 ```
+
+The engine owns the loop; a game supplies callbacks. Closing the window is a
+*request* -- a game that wants to honour it calls `quit()`, as above.
+
+> **Milestone 1 caveat.** `run()` currently uses the headless null backend, so
+> no window appears and no close event ever arrives. A game must call `quit()`
+> itself or it will run forever. Real windows arrive with the X11 and Win32
+> backends.
 
 ## Development
 
