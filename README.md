@@ -37,6 +37,9 @@ may import OS libraries or branch on the host platform. This keeps the engine
 portable and makes the platform layer the natural first candidate should a
 performance-critical rewrite in Rust or C++ ever be needed.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the design decisions and the
+reasoning behind them.
+
 ## Layout
 
 ```
