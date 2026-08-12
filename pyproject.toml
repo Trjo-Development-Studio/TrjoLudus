@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]  # PEP 639 SPDX `license` string support
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trjoludus"
+description = "A lightweight, custom 2D game engine by Trjo Development Studio."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Trjo Development Studio" }]
+keywords = ["game", "engine", "2d", "gamedev"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Games/Entertainment",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+
+# TrjoLudus has no runtime dependencies and is intended to keep it that way.
+# Platform access is done directly through ctypes against OS libraries.
+dependencies = []
+
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/trjo/TrjoLudus"
+
+[tool.setuptools.dynamic]
+version = { attr = "trjoludus.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["trjoludus*"]

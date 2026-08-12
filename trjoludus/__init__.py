@@ -1,0 +1,31 @@
+"""TrjoLudus -- a lightweight 2D game engine by Trjo Development Studio.
+
+This module is the public API of the engine. Games should import from
+``trjoludus`` (and, later, its documented subpackages) and should not reach
+into private modules, because everything below this surface is free to change.
+
+    import trjoludus
+
+    print(trjoludus.__version__)
+    print(trjoludus.detect_platform())
+"""
+
+from trjoludus.errors import (
+    PlatformError,
+    TrjoLudusError,
+    UnsupportedPlatformError,
+)
+from trjoludus.platform import PlatformName, detect_platform
+
+__version__ = "0.0.1"
+
+__all__ = [
+    "__version__",
+    # Errors
+    "TrjoLudusError",
+    "PlatformError",
+    "UnsupportedPlatformError",
+    # Platform
+    "PlatformName",
+    "detect_platform",
+]
