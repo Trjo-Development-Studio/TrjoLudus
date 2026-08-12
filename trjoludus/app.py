@@ -149,14 +149,14 @@ class Application:
     def _loop(self, window) -> None:
         """Run frames until the game asks to stop."""
         game = self._game
-        while not game._quit_requested:
+        while not game.quit_requested:
             # The whole batch is delivered even if a handler calls quit():
             # these events already happened, and dropping some of them would
             # make delivery depend on where in the batch quit() landed.
             for event in window.poll_events():
                 game.on_event(event)
 
-            if game._quit_requested:
+            if game.quit_requested:
                 break
 
             game.on_update(self._clock.tick())

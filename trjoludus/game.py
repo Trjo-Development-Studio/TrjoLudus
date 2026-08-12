@@ -31,10 +31,20 @@ class Game:
         on_stop()
     """
 
-    #: Set by :meth:`quit`, read by the running application. A class attribute
-    #: rather than an ``__init__`` assignment so that a subclass defining its
-    #: own ``__init__`` cannot break :meth:`quit` by forgetting ``super()``.
+    #: Backing store for :attr:`quit_requested`. A class attribute rather than
+    #: an ``__init__`` assignment so that a subclass defining its own
+    #: ``__init__`` cannot break :meth:`quit` by forgetting ``super()``.
     _quit_requested: bool = False
+
+    @property
+    def quit_requested(self) -> bool:
+        """Whether :meth:`quit` has been called.
+
+        Read-only: a game asks to stop by calling :meth:`quit`, and the
+        application only observes the answer. There is deliberately no setter,
+        so the request has exactly one entry point.
+        """
+        return self._quit_requested
 
     def on_start(self) -> None:
         """Called once, after the window exists and before the first frame.
@@ -90,5 +100,7 @@ class Game:
         still delivered, but :meth:`on_update` is not called again. Calling it
         more than once, or before the loop starts, is harmless -- the request
         is a flag, not a queue.
+
+        Sets :attr:`quit_requested`, which is how the application observes it.
         """
         self._quit_requested = True

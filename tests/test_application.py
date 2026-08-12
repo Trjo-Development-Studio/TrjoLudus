@@ -302,6 +302,29 @@ class TestCloseRequestBehaviour(unittest.TestCase):
         self.assertEqual(game.calls, ["on_start", "on_event", "on_stop"])
 
 
+class TestQuitSeam(unittest.TestCase):
+    """The application observes the request; it does not reach into Game."""
+
+    def test_application_reads_the_public_property(self):
+        source = Path(trjoludus.app.__file__).read_text(encoding="utf-8")
+        self.assertIn("quit_requested", source)
+        self.assertNotIn("_quit_requested", source)
+
+    def test_loop_observes_quit_requested(self):
+        """A game that only overrides the property still stops the loop."""
+
+        class ExternallyStopped(RecordingGame):
+            stop_after = 2
+
+            @property
+            def quit_requested(self):
+                return len(self.deltas) >= self.stop_after
+
+        game = ExternallyStopped(quit_after=99)
+        run_app(game)
+        self.assertEqual(game.frames, 2)
+
+
 class TestQuitTiming(unittest.TestCase):
     def test_quit_before_run_skips_every_frame(self):
         game = RecordingGame(quit_after=5)

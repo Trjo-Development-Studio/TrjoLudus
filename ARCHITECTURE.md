@@ -277,6 +277,9 @@ class Game:
     def on_stop(self) -> None: ...
     def quit(self) -> None: ...        # request shutdown
 
+    @property
+    def quit_requested(self) -> bool: ...   # read-only; set only by quit()
+
 
 tl.run(game, *, title="TrjoLudus", size=(1280, 720), max_fps=60) -> None
 ```
@@ -366,6 +369,10 @@ Ordered by severity.
 | 2026-08-12 | Headless `null` backend, built before any OS code | Proves the loop with zero platform code; runs in CI and without a display |
 | 2026-08-12 | `on_draw()` deferred to Milestone 3 (2D shape rendering) | Adding a hook to a base class later is purely additive -- existing games simply do not override it -- so there is no churn to avoid by adding it early |
 | 2026-08-12 | 3D is out of scope | 2D engine first; revisit much later |
+| 2026-08-12 | Loop order: poll -> dispatch -> `clock.tick()` -> `on_update(dt)` | Follows the lifecycle agreed in section 5. The pacing sleep sits between dispatch and update, so events are up to one frame stale by the time a game reacts; ticking first would remove that. Not observable without a renderer, so revisit at Milestone 3 |
+| 2026-08-12 | `tl.run()` defaults to the null backend | Development-stage behaviour only: no real backend exists yet, so a window is simulated and never closes itself. Real per-platform selection arrives with the X11 and Win32 backends |
+| 2026-08-12 | `Application` is public alongside `tl.run()` | `tl.run()` stays the simple entry point; `Application` gives an explicit API and the testing seam, including direct backend injection |
+| 2026-08-12 | `Game.quit_requested` is a public read-only property | `Game` owns the shutdown request through `quit()`; `Application` only observes it. Keeps the application off `Game`'s private state, and leaves exactly one way to request a stop |
 
 ---
 

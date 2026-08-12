@@ -32,29 +32,73 @@ class TestDefaults(unittest.TestCase):
     def test_close_request_is_not_acted_on_by_default(self):
         """The engine treats closing as a request; the game decides."""
         self.game.on_event(WindowCloseRequested())
-        self.assertFalse(self.game._quit_requested)
+        self.assertFalse(self.game.quit_requested)
+
+
+class TestQuitRequestedProperty(unittest.TestCase):
+    """quit_requested is the public, read-only view of the shutdown request."""
+
+    def test_is_a_property_on_the_class(self):
+        self.assertIsInstance(Game.quit_requested, property)
+
+    def test_is_a_bool(self):
+        self.assertIsInstance(Game().quit_requested, bool)
+
+    def test_defaults_to_false(self):
+        self.assertFalse(Game().quit_requested)
+
+    def test_reflects_quit(self):
+        game = Game()
+        game.quit()
+        self.assertTrue(game.quit_requested)
+
+    def test_has_no_setter(self):
+        self.assertIsNone(Game.quit_requested.fset)
+
+    def test_cannot_be_assigned(self):
+        """Only quit() may request a stop."""
+        game = Game()
+        with self.assertRaises(AttributeError):
+            game.quit_requested = True
+        self.assertFalse(game.quit_requested)
+
+    def test_cannot_be_cleared_once_requested(self):
+        game = Game()
+        game.quit()
+        with self.assertRaises(AttributeError):
+            game.quit_requested = False
+        self.assertTrue(game.quit_requested)
+
+    def test_is_available_on_subclasses(self):
+        class Subclass(Game):
+            pass
+
+        game = Subclass()
+        self.assertFalse(game.quit_requested)
+        game.quit()
+        self.assertTrue(game.quit_requested)
 
 
 class TestQuit(unittest.TestCase):
     def test_starts_without_a_quit_request(self):
-        self.assertFalse(Game()._quit_requested)
+        self.assertFalse(Game().quit_requested)
 
     def test_requests_shutdown(self):
         game = Game()
         game.quit()
-        self.assertTrue(game._quit_requested)
+        self.assertTrue(game.quit_requested)
 
     def test_is_idempotent(self):
         game = Game()
         game.quit()
         game.quit()
-        self.assertTrue(game._quit_requested)
+        self.assertTrue(game.quit_requested)
 
     def test_request_is_per_instance(self):
         first, second = Game(), Game()
         first.quit()
-        self.assertTrue(first._quit_requested)
-        self.assertFalse(second._quit_requested)
+        self.assertTrue(first.quit_requested)
+        self.assertFalse(second.quit_requested)
 
     def test_works_without_calling_super_init(self):
         """A subclass with its own __init__ must not break quit()."""
@@ -65,7 +109,7 @@ class TestQuit(unittest.TestCase):
 
         game = Subclass()
         game.quit()
-        self.assertTrue(game._quit_requested)
+        self.assertTrue(game.quit_requested)
 
 
 class TestOverriding(unittest.TestCase):
@@ -111,10 +155,10 @@ class TestOverriding(unittest.TestCase):
 
         game = Closing()
         game.on_event(WindowResized(1, 1))
-        self.assertFalse(game._quit_requested)
+        self.assertFalse(game.quit_requested)
 
         game.on_event(WindowCloseRequested())
-        self.assertTrue(game._quit_requested)
+        self.assertTrue(game.quit_requested)
 
 
 class TestPublicApi(unittest.TestCase):
