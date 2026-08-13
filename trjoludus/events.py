@@ -18,9 +18,17 @@ __all__ = [
     "Event",
     "KEY_NAMES",
     "KeyPressed",
+    "MOUSE_BUTTONS",
+    "MouseButtonPressed",
+    "MouseButtonReleased",
+    "MouseMoved",
     "WindowCloseRequested",
     "WindowResized",
 ]
+
+#: Every mouse button TrjoLudus names. Scroll wheels and extra side buttons
+#: are not reported yet rather than reported under a guessed name.
+MOUSE_BUTTONS = frozenset({"LEFT", "RIGHT", "MIDDLE"})
 
 #: Every key TrjoLudus can currently name, as it is reported to a game.
 #:
@@ -63,6 +71,49 @@ class KeyPressed(Event):
     """
 
     key: str
+
+
+@dataclass(frozen=True, slots=True)
+class MouseMoved(Event):
+    """The pointer moved to a new place inside the window.
+
+    Attributes:
+        x: Pixels from the left edge of the client area.
+        y: Pixels from the top edge of the client area.
+    """
+
+    x: int
+    y: int
+
+
+@dataclass(frozen=True, slots=True)
+class MouseButtonPressed(Event):
+    """A mouse button went down.
+
+    Attributes:
+        button: One of :data:`MOUSE_BUTTONS`.
+        x: Where the pointer was, in client-area pixels.
+        y: Where the pointer was, in client-area pixels.
+    """
+
+    button: str
+    x: int
+    y: int
+
+
+@dataclass(frozen=True, slots=True)
+class MouseButtonReleased(Event):
+    """A mouse button came back up.
+
+    Attributes:
+        button: One of :data:`MOUSE_BUTTONS`.
+        x: Where the pointer was, in client-area pixels.
+        y: Where the pointer was, in client-area pixels.
+    """
+
+    button: str
+    x: int
+    y: int
 
 
 @dataclass(frozen=True, slots=True)

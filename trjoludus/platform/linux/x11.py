@@ -25,6 +25,9 @@ from trjoludus.errors import PlatformError
 from trjoludus.events import (
     Event,
     KeyPressed,
+    MouseButtonPressed,
+    MouseButtonReleased,
+    MouseMoved,
     WindowCloseRequested,
     WindowResized,
 )
@@ -108,6 +111,20 @@ def key_name(keysym: int) -> str | None:
     if 0x30 <= keysym <= 0x39:  # 0-9
         return chr(keysym)
     return None
+
+
+#: X numbers its buttons; TrjoLudus names them. Anything else -- the scroll
+#: wheel is 4 and 5 -- is left out rather than reported under a guessed name.
+_BUTTON_NAMES = {
+    _xlib.BUTTON_LEFT: "LEFT",
+    _xlib.BUTTON_MIDDLE: "MIDDLE",
+    _xlib.BUTTON_RIGHT: "RIGHT",
+}
+
+
+def button_name(number: int) -> str | None:
+    """Translate an X button number into a canonical name, or ``None``."""
+    return _BUTTON_NAMES.get(number)
 
 
 def _install_error_handlers(xlib) -> None:
@@ -340,7 +357,11 @@ class X11Backend(PlatformBackend):
         xlib.XSelectInput(
             self._display,
             window_id,
-            _xlib.STRUCTURE_NOTIFY_MASK | _xlib.KEY_PRESS_MASK,
+            _xlib.STRUCTURE_NOTIFY_MASK
+            | _xlib.KEY_PRESS_MASK
+            | _xlib.BUTTON_PRESS_MASK
+            | _xlib.BUTTON_RELEASE_MASK
+            | _xlib.POINTER_MOTION_MASK,
         )
         self._apply_title(window_id, title)
         xlib.XMapWindow(self._display, window_id)
@@ -539,6 +560,26 @@ class X11Backend(PlatformBackend):
             name = key_name(keysym)
             if name is not None:
                 window._pending.append(KeyPressed(name))
+
+        elif event_type == _xlib.MOTION_NOTIFY:
+            window = self._windows.get(event.xmotion.window)
+            if window is not None:
+                window._pending.append(
+                    MouseMoved(event.xmotion.x, event.xmotion.y)
+                )
+
+        elif event_type in (_xlib.BUTTON_PRESS, _xlib.BUTTON_RELEASE):
+            window = self._windows.get(event.xbutton.window)
+            if window is None:
+                return
+            name = button_name(event.xbutton.button)
+            if name is None:
+                return
+            x, y = event.xbutton.x, event.xbutton.y
+            if event_type == _xlib.BUTTON_PRESS:
+                window._pending.append(MouseButtonPressed(name, x, y))
+            else:
+                window._pending.append(MouseButtonReleased(name, x, y))
 
         elif event_type == _xlib.DESTROY_NOTIFY:
             window = self._windows.get(event.xdestroywindow.window)

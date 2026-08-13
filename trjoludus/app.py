@@ -33,7 +33,12 @@ from trjoludus.errors import TrjoLudusError
 from trjoludus.game import Game
 from trjoludus.platform import create_backend
 from trjoludus.platform.base import PlatformBackend
-from trjoludus.events import KeyPressed
+from trjoludus.events import (
+    KeyPressed,
+    MouseButtonPressed,
+    MouseButtonReleased,
+    MouseMoved,
+)
 from trjoludus.render import Framebuffer
 from trjoludus.scene import current_scene
 from trjoludus.ui import current_ui
@@ -119,6 +124,7 @@ class Application:
         self._clock = Clock(max_fps=max_fps)
         self._framebuffer = Framebuffer(*self._size)
         self._keys: deque[str] = deque()
+        self._clicks: deque[tuple[str, int, int]] = deque()
         self._window = None
         # Deliberately not selected here: constructing an Application must not
         # open a display, so an unset backend is resolved when run() starts.
@@ -189,9 +195,13 @@ class Application:
         finally:
             from trjoludus.keyboard import key as _key
 
+            from trjoludus import mouse as _mouse
+
             _running = previous
             self._window = None
             self._keys.clear()
+            self._clicks.clear()
+            _mouse._reset()
             # Unread input belonged to this run, and so did the last key. A
             # second game must not start out holding the first one's press.
             _key._set(None)
@@ -236,45 +246,72 @@ class Application:
     def _deliver(self, events) -> None:
         """Route one batch of events.
 
-        Key presses go into a queue for :func:`trjoludus.keyboard.wait` rather
-        than to ``on_event``. Delivering them to both would show a game the
-        same press twice and leave it unclear which one owned it.
+        Input goes into queues for the waiting calls rather than to
+        ``on_event``. Delivering it to both would show a game the same press
+        twice and leave it unclear which one owned it.
+
+        Pointer movement is state, not input: it updates where the mouse is
+        and queues nothing, so a wait is not ended by someone nudging the
+        mouse.
         """
+        from trjoludus import mouse
+
         for event in events:
             if isinstance(event, KeyPressed):
                 self._keys.append(event.key)
+            elif isinstance(event, MouseMoved):
+                mouse._moved(event.x, event.y)
+            elif isinstance(event, MouseButtonPressed):
+                mouse._button_down(event.button, event.x, event.y)
+                self._clicks.append((event.button, event.x, event.y))
+            elif isinstance(event, MouseButtonReleased):
+                mouse._button_up(event.button, event.x, event.y)
             else:
                 self._game.on_event(event)
 
     def _wait_for_key(self) -> str | None:
-        """Block until a key press is available, and return its name.
+        """Block until a key press is available, and return its name."""
+        return self._wait_for(self._keys, "keyboard.wait()")
 
-        Presses are queued and handed out oldest first, each returned exactly
-        once. A press that arrived earlier and has not been answered yet is
-        returned immediately -- that is a new event, not a repeat of the last
-        one.
+    def _wait_for_mouse(self) -> tuple[str, int, int] | None:
+        """Block until a mouse button is pressed.
 
-        Pumps the same window and delivers non-key events the same way the
-        main loop does, so a close request still reaches the game while a wait
-        is in progress. If the game responds by quitting, this returns
-        ``None`` rather than waiting for a key that may never come.
+        Returns ``(button, x, y)`` -- the position is the one the click
+        happened at, not wherever the pointer has drifted to since, so a game
+        acting on a click acts on the right place.
+        """
+        return self._wait_for(self._clicks, "mouse.wait()")
+
+    def _wait_for(self, queue: deque, called: str) -> str | None:
+        """Block until ``queue`` has something in it, and take the oldest.
+
+        Input is queued and handed out oldest first, each item returned
+        exactly once. Something that arrived earlier and has not been answered
+        yet comes back immediately -- that is a new event, not a repeat of the
+        last one.
+
+        Pumps the same window and delivers other events the way the main loop
+        does, so a close request still reaches the game while a wait is in
+        progress. Returns ``None`` rather than waiting forever if the game
+        quits, or if its last window disappears -- a window can be destroyed
+        without a close request ever being sent, and then the input being
+        waited for can never arrive.
+
+        One implementation for every kind of waiting, so a new one cannot
+        quietly miss a reason to stop.
         """
         if self._window is None:  # pragma: no cover -- run() sets it
-            raise TrjoLudusError("keyboard.wait() needs a running game.")
+            raise TrjoLudusError(f"{called} needs a running game.")
 
         while True:
-            if self._keys:
-                return self._keys.popleft()
+            if queue:
+                return queue.popleft()
             if self._game.quit_requested:
                 return None
-            # A window can vanish without asking -- the desktop can destroy
-            # it, and then no close request is coming. Waiting on for a key
-            # that can no longer be typed would hang the process, so the same
-            # rule that ends the loop ends the wait.
             if not self._backend.keeps_application_alive:
                 return None
             self._deliver(self._window.poll_events())
-            if self._keys or self._game.quit_requested:
+            if queue or self._game.quit_requested:
                 continue
             # Nothing arrived. Pause briefly rather than spin: this is pacing,
             # not a wait for something that has already happened.

@@ -175,6 +175,15 @@ WM_CLOSE = 0x0010
 WM_KEYDOWN = 0x0100
 WM_SYSKEYDOWN = 0x0104
 
+#: Pointer messages. Position arrives packed into lParam.
+WM_MOUSEMOVE = 0x0200
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+WM_RBUTTONDOWN = 0x0204
+WM_RBUTTONUP = 0x0205
+WM_MBUTTONDOWN = 0x0207
+WM_MBUTTONUP = 0x0208
+
 #: Virtual-key codes that are not simply a character (WinUser.h).
 VK_RETURN = 0x0D
 VK_ESCAPE = 0x1B

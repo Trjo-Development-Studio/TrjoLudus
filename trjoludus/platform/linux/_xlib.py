@@ -64,6 +64,9 @@ Bool = c_int
 
 #: Event type codes (X11/X.h).
 KEY_PRESS = 2
+BUTTON_PRESS = 4
+BUTTON_RELEASE = 5
+MOTION_NOTIFY = 6
 DESTROY_NOTIFY = 17
 CONFIGURE_NOTIFY = 22
 CLIENT_MESSAGE = 33
@@ -74,6 +77,17 @@ STRUCTURE_NOTIFY_MASK = 1 << 17
 #: Event mask selecting KeyPress. Key *releases* are not selected: nothing
 #: reports them yet, and asking for events no one reads only costs round trips.
 KEY_PRESS_MASK = 1 << 0
+
+#: Masks selecting the pointer. Button releases *are* selected, unlike key
+#: releases, because "is this button held" needs to know when it stops being.
+BUTTON_PRESS_MASK = 1 << 2
+BUTTON_RELEASE_MASK = 1 << 3
+POINTER_MOTION_MASK = 1 << 6
+
+#: X button numbers. 4 and 5 are the scroll wheel, which is not reported yet.
+BUTTON_LEFT = 1
+BUTTON_MIDDLE = 2
+BUTTON_RIGHT = 3
 
 #: XChangeProperty mode.
 PROP_MODE_REPLACE = 0
@@ -156,6 +170,55 @@ class XKeyEvent(Structure):
         ("y_root", c_int),
         ("state", c_uint),
         ("keycode", c_uint),
+        ("same_screen", Bool),
+    ]
+
+
+class XButtonEvent(Structure):
+    """A ButtonPress or ButtonRelease."""
+
+    _fields_ = [
+        ("type", c_int),
+        ("serial", c_ulong),
+        ("send_event", Bool),
+        ("display", Display),
+        ("window", Window),
+        ("root", Window),
+        ("subwindow", Window),
+        ("time", c_ulong),
+        ("x", c_int),
+        ("y", c_int),
+        ("x_root", c_int),
+        ("y_root", c_int),
+        ("state", c_uint),
+        ("button", c_uint),
+        ("same_screen", Bool),
+    ]
+
+
+class XMotionEvent(Structure):
+    """A MotionNotify.
+
+    Identical to a button event up to ``state``, then differs: this carries a
+    one-byte ``is_hint`` where the button event carries a four-byte button
+    number. Sharing one struct for both would misread the coordinates.
+    """
+
+    _fields_ = [
+        ("type", c_int),
+        ("serial", c_ulong),
+        ("send_event", Bool),
+        ("display", Display),
+        ("window", Window),
+        ("root", Window),
+        ("subwindow", Window),
+        ("time", c_ulong),
+        ("x", c_int),
+        ("y", c_int),
+        ("x_root", c_int),
+        ("y_root", c_int),
+        ("state", c_uint),
+        ("is_hint", c_char),
         ("same_screen", Bool),
     ]
 
@@ -251,6 +314,8 @@ class XEvent(Union):
         ("xclient", XClientMessageEvent),
         ("xconfigure", XConfigureEvent),
         ("xkey", XKeyEvent),
+        ("xbutton", XButtonEvent),
+        ("xmotion", XMotionEvent),
         ("xdestroywindow", XDestroyWindowEvent),
         ("pad", c_long * 24),
     ]

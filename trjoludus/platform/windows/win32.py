@@ -26,6 +26,9 @@ from trjoludus.errors import PlatformError
 from trjoludus.events import (
     Event,
     KeyPressed,
+    MouseButtonPressed,
+    MouseButtonReleased,
+    MouseMoved,
     WindowCloseRequested,
     WindowResized,
 )
@@ -74,6 +77,33 @@ def key_name(virtual_key: int) -> str | None:
     if 0x30 <= virtual_key <= 0x39:  # 0-9
         return chr(virtual_key)
     return None
+
+
+#: Which button each message concerns, and whether it went down.
+_BUTTON_MESSAGES = {
+    _user32.WM_LBUTTONDOWN: ("LEFT", True),
+    _user32.WM_LBUTTONUP: ("LEFT", False),
+    _user32.WM_RBUTTONDOWN: ("RIGHT", True),
+    _user32.WM_RBUTTONUP: ("RIGHT", False),
+    _user32.WM_MBUTTONDOWN: ("MIDDLE", True),
+    _user32.WM_MBUTTONUP: ("MIDDLE", False),
+}
+
+
+def signed_word(value: int) -> int:
+    """Read a 16-bit field as signed.
+
+    Pointer coordinates are signed: with the mouse captured, a drag past the
+    left or top edge reports a negative position, which read as unsigned would
+    become a number near 65535.
+    """
+    value &= 0xFFFF
+    return value - 0x10000 if value & 0x8000 else value
+
+
+def mouse_position(lparam: int) -> tuple[int, int]:
+    """Unpack the pointer position Win32 packs into an LPARAM."""
+    return (signed_word(lparam), signed_word(lparam >> 16))
 
 
 def loword(value: int) -> int:
@@ -417,6 +447,21 @@ class Win32Backend(PlatformBackend):
                     if size != window._size:
                         window._size = size
                         window._pending.append(WindowResized(size[0], size[1]))
+                return 0
+
+            if message == _user32.WM_MOUSEMOVE:
+                x, y = mouse_position(lparam)
+                window._pending.append(MouseMoved(x, y))
+                return 0
+
+            button = _BUTTON_MESSAGES.get(message)
+            if button is not None:
+                name, went_down = button
+                x, y = mouse_position(lparam)
+                window._pending.append(
+                    MouseButtonPressed(name, x, y) if went_down
+                    else MouseButtonReleased(name, x, y)
+                )
                 return 0
 
             if message in (_user32.WM_KEYDOWN, _user32.WM_SYSKEYDOWN):

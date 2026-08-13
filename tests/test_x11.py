@@ -139,11 +139,22 @@ class TestDeclarations(unittest.TestCase):
         self.assertEqual(_xlib.KEY_PRESS, 2)
         self.assertEqual(_xlib.KEY_PRESS_MASK, 1 << 0)
 
-    def test_no_mouse_masks_are_declared(self):
-        """Mouse input is still a later milestone."""
-        for name in dir(_xlib):
-            self.assertNotIn("BUTTON_PRESS", name)
-            self.assertNotIn("POINTER_MOTION", name)
+    def test_mouse_constants(self):
+        self.assertEqual(_xlib.BUTTON_PRESS, 4)
+        self.assertEqual(_xlib.BUTTON_RELEASE, 5)
+        self.assertEqual(_xlib.MOTION_NOTIFY, 6)
+        self.assertEqual(_xlib.BUTTON_PRESS_MASK, 1 << 2)
+        self.assertEqual(_xlib.BUTTON_RELEASE_MASK, 1 << 3)
+        self.assertEqual(_xlib.POINTER_MOTION_MASK, 1 << 6)
+
+    def test_motion_and_button_events_are_separate_structs(self):
+        """They diverge after `state`, so sharing one would misread them."""
+        self.assertIsNot(_xlib.XMotionEvent, _xlib.XButtonEvent)
+        button = [name for name, _ in _xlib.XButtonEvent._fields_]
+        motion = [name for name, _ in _xlib.XMotionEvent._fields_]
+        self.assertIn("button", button)
+        self.assertIn("is_hint", motion)
+        self.assertNotIn("button", motion)
 
     def test_xid_types_are_unsigned_long(self):
         for name in ("XID", "Window", "Atom"):

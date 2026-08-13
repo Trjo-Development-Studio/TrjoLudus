@@ -5,7 +5,7 @@ written in Python and designed for Windows and Linux.
 
 > **Status: pre-alpha.** On Linux, `run()` opens a **real window**, draws
 > named image objects into it, moves them, destroys them, draws a simple user
-> interface and waits for keyboard input. A Windows backend exists but is **not yet verified on
+> interface and reads the keyboard and mouse. A Windows backend exists but is **not yet verified on
 > Windows**. Mouse, sound, collision and animation are not implemented yet.
 
 ## Philosophy
@@ -55,7 +55,8 @@ trjoludus/
     ui.py              drawing lists
     font.py            the built-in text font
     keyboard.py        waiting for key presses
-    input.py           what wait() can wait for
+    mouse.py           pointer position, buttons and clicks
+    input.py           what the waiting calls can wait for
     scene.py           named game objects and the scene holding them
     image.py           images, and PNG decoding
     render.py          the frame buffer objects are composited into
@@ -120,6 +121,7 @@ live in [`examples/`](examples/README.md):
 ```sh
 python examples/image_test.py
 python examples/keyboard_test.py
+python examples/mouse_test.py
 python examples/ui_test.py
 ```
 
@@ -192,6 +194,30 @@ Keys outside that list are ignored rather than reported under a guessed name.
 > file. If a file needs both, import `trjoludus.input` under another name.
 
 See [`examples/keyboard_test.py`](examples/keyboard_test.py).
+
+### Mouse input
+
+```python
+from trjoludus import input, mouse
+
+if mouse.pressed("LEFT"):
+    print(mouse.x, mouse.y)
+
+mouse.wait(input.mouse)
+print(mouse.button)     # LEFT
+```
+
+Where the pointer is and whether a button is held are **state**: read
+`mouse.x`, `mouse.y`, `mouse.position` or `mouse.pressed("LEFT")` whenever you
+like and you get the current answer. A button going down is an **input**:
+`mouse.wait(input.mouse)` hands each press out exactly once, in order, exactly
+as `keyboard.wait` does with keys.
+
+Moving the mouse does not end a wait -- only a button does. Afterwards
+`mouse.x` and `mouse.y` report where that click happened. The buttons are
+`"LEFT"`, `"RIGHT"` and `"MIDDLE"`; the scroll wheel is not reported yet.
+
+See [`examples/mouse_test.py`](examples/mouse_test.py).
 
 ### Removing an object
 

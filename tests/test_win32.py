@@ -163,11 +163,12 @@ class TestDeclarations(unittest.TestCase):
         self.assertEqual(_user32.VK_ESCAPE, 0x1B)
         self.assertEqual(_user32.VK_RETURN, 0x0D)
 
-    def test_no_mouse_messages_are_declared(self):
-        """Mouse input is still a later milestone."""
-        for name in dir(_user32):
-            self.assertNotIn("WM_MOUSE", name)
-            self.assertNotIn("WM_LBUTTON", name)
+    def test_mouse_message_constants(self):
+        self.assertEqual(_user32.WM_MOUSEMOVE, 0x0200)
+        self.assertEqual(_user32.WM_LBUTTONDOWN, 0x0201)
+        self.assertEqual(_user32.WM_LBUTTONUP, 0x0202)
+        self.assertEqual(_user32.WM_RBUTTONDOWN, 0x0204)
+        self.assertEqual(_user32.WM_MBUTTONDOWN, 0x0207)
 
     def test_backend_name_constant(self):
         self.assertEqual(BACKEND_NAME, "win32")

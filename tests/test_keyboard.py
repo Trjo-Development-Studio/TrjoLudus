@@ -70,9 +70,10 @@ class TestKeyNames(unittest.TestCase):
     def test_input_key_is_the_key_value(self):
         self.assertIs(tl.input.key, tl.key)
 
-    def test_input_offers_nothing_else_yet(self):
-        """Mouse input would live here; it does not exist.""" 
-        self.assertFalse(hasattr(tl.input, "mouse"))
+    def test_input_offers_a_slot_for_each_kind_of_input(self):
+        self.assertIs(tl.input.key, tl.key)
+        self.assertIsNotNone(tl.input.mouse)
+        self.assertIsNot(tl.input.key, tl.input.mouse)
 
 
 class TestKeyValue(unittest.TestCase):
