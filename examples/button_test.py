@@ -7,8 +7,9 @@ Run it from anywhere:
 Move the mouse over the button to make it grow, click it to count a press, and
 click the small red square to quit.
 
-Nothing is repainted here. The buttons are drawn once in ``on_start``; each
-frame only asks what the mouse is doing and adjusts a scale.
+Nothing is rebuilt here. Everything is drawn once in ``on_start`` and then
+changed in place: each frame asks what the mouse is doing, adjusts a scale,
+and writes a new number into the counter that is already on screen.
 """
 
 import sys
@@ -36,13 +37,7 @@ class ButtonTest(Game):
         self.label = menu.text(196, 143, "PLAY", color.white)
         self.quit_button = menu.rect(430, 260, 30, 30, color.red)
 
-        # A row of lamps: one lights up per click. Changing a drawing's text
-        # after it is made is not something TrjoLudus can do yet, so the count
-        # is shown by revealing things that were drawn up front.
-        self.lamps = [
-            menu.rect(20 + index * 24, 260, 16, 16, color.yellow).hide()
-            for index in range(8)
-        ]
+        self.counter = menu.text(20, 260, "Clicks: 0", color.white)
         self.presses = 0
 
     def on_event(self, event):
@@ -57,9 +52,11 @@ class ButtonTest(Game):
             self.play.set.scale(1.0)
 
         if self.play.mouse.clicked():
-            if self.presses < len(self.lamps):
-                self.lamps[self.presses].show()
             self.presses += 1
+            self.counter.set.text(f"Clicks: {self.presses}")
+            # Warm the label up as the count grows, so a change of colour is
+            # visible as well as a change of words.
+            self.counter.set.color((250, max(0, 250 - self.presses * 25), 80))
 
         if self.quit_button.mouse.clicked():
             self.quit()

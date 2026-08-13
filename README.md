@@ -189,6 +189,35 @@ Scale grows a drawing from its top-left corner, so scaling never moves the
 corner you placed. `set.scale(2)`, `add.scale(0.25)` and `remove.scale(0.25)`
 are the three ways to change it.
 
+### Changing a drawing
+
+Nothing is repainted every frame. A drawing is made once and then changed in
+place, and the next frame shows it:
+
+```python
+score = hud.text(10, 10, "Score: 0", color.white)
+
+score.set.text(f"Score: {points}")
+score.set.color(color.yellow)
+score.move.x(4)
+```
+
+`set` gives an exact value, `move` nudges by an amount, and `add` / `remove`
+change a value relative to what it is now. Only the properties that mean
+something for a drawing are there, so asking a rectangle for its text says so
+rather than doing nothing:
+
+| Drawing | `set.text` | `set.color` | `set.scale` | `add`/`remove.scale` | `move.x` / `move.y` |
+| --- | --- | --- | --- | --- | --- |
+| Text | yes | yes | yes | yes | yes |
+| Rectangle | no | yes | yes | yes | yes |
+| Line | no | yes | yes | yes | yes |
+
+There is no `set.x()`: moving is spelled `move`, the same as it is for game
+objects. Changes show up in what the mouse finds as well as in what is drawn,
+so a button that has moved, grown or changed its words is hovered and clicked
+where it is now.
+
 See [`examples/button_test.py`](examples/button_test.py).
 
 Text uses a small built-in font, so it needs no font files: printable ASCII at

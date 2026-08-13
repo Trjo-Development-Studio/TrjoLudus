@@ -62,48 +62,128 @@ def _scale_factor(value, label: str = "a scale") -> float:
     return float(value)
 
 
-class _Scaling:
-    """``set``/``add``/``remove`` for a drawing's scale.
+class _Setter:
+    """``set``: give a drawing an exact new value.
 
-    Three namespaces rather than one method because the three read
-    differently at the call site: setting an exact size, growing, shrinking.
-    Only scale lives here -- position keeps ``move``, which already means the
-    same thing.
+    Only the properties that mean something for a given drawing are allowed.
+    Asking a rectangle for its text is a mistake worth hearing about, not
+    something to quietly ignore.
     """
 
-    __slots__ = ("_drawable", "_how")
+    __slots__ = ("_drawable",)
+
+    def __init__(self, drawable: "Drawable") -> None:
+        self._drawable = drawable
+
+    def scale(self, amount) -> "Drawable":
+        """Set how much bigger than normal the drawing is. 1 is normal."""
+        drawable = self._drawable
+        drawable._live()
+        drawable._scale = _scale_factor(amount)
+        return drawable
+
+    def color(self, value) -> "Drawable":
+        """Change what colour the drawing is."""
+        drawable = self._drawable
+        drawable._live()
+        drawable.colour = color_module.check(value, "a colour")
+        return drawable
+
+    def text(self, message: str) -> "Drawable":
+        """Change the words a text drawing shows.
+
+        Raises:
+            UiError: If this drawing is not text.
+            TypeError: If ``message`` is not a string.
+        """
+        drawable = self._drawable
+        drawable._live()
+        drawable._require("text", "text")
+        if not isinstance(message, str):
+            raise TypeError(
+                f"text must be a string, got {type(message).__name__}"
+            )
+        drawable.message = message
+        return drawable
+
+    def __repr__(self) -> str:
+        return f"_Setter({self._drawable!r})"
+
+
+class _Adjuster:
+    """``add`` and ``remove``: change a value relative to what it is now.
+
+    Only scale gets these. Growing a colour means nothing, and moving is
+    already spelled ``move``, so inventing relative versions of everything
+    would add spellings without adding sense.
+    """
+
+    __slots__ = ("_drawable", "_sign", "_how")
 
     def __init__(self, drawable: "Drawable", how: str) -> None:
         self._drawable = drawable
         self._how = how
+        self._sign = 1 if how == "add" else -1
 
     def scale(self, amount) -> "Drawable":
-        """Set, add to, or subtract from the drawing's scale."""
+        """Grow or shrink the drawing by an amount."""
         drawable = self._drawable
         drawable._live()
-        if self._how == "set":
-            drawable._scale = _scale_factor(amount)
-        elif self._how == "add":
-            drawable._scale = _scale_factor(
-                drawable._scale + _scale_factor(amount, "an amount to add")
-            )
-        else:
-            drawable._scale = _scale_factor(
-                drawable._scale - _scale_factor(amount, "an amount to remove"),
-                "the resulting scale",
-            )
+        change = _scale_factor(amount, f"an amount to {self._how}")
+        drawable._scale = _scale_factor(
+            drawable._scale + self._sign * change,
+            "the resulting scale",
+        )
         return drawable
 
     def __repr__(self) -> str:
-        return f"_Scaling({self._how!r})"
+        return f"_Adjuster({self._how!r})"
+
+
+class _DrawingMovement:
+    """``move``: shift a drawing relative to where it is.
+
+    The same spelling game objects use, and for the same reason: setting an
+    exact position and nudging by an amount are different intentions, and
+    ``move`` is the one that reads as nudging.
+    """
+
+    __slots__ = ("_drawable",)
+
+    def __init__(self, drawable: "Drawable") -> None:
+        self._drawable = drawable
+
+    def x(self, pixels: int) -> "Drawable":
+        """Move right by ``pixels``, or left if negative."""
+        drawable = self._drawable
+        drawable._live()
+        amount = _whole_number(pixels, "a movement distance")
+        drawable.x += amount
+        if drawable.kind == "line":
+            drawable.end_x += amount
+        return drawable
+
+    def y(self, pixels: int) -> "Drawable":
+        """Move down by ``pixels``, or up if negative."""
+        drawable = self._drawable
+        drawable._live()
+        amount = _whole_number(pixels, "a movement distance")
+        drawable.y += amount
+        if drawable.kind == "line":
+            drawable.end_y += amount
+        return drawable
+
+    def __repr__(self) -> str:
+        return f"_DrawingMovement({self._drawable!r})"
 
 
 class DrawableMouse:
     """What the mouse is doing to one drawing.
 
     Reached as :attr:`Drawable.mouse`. Both questions are about *this*
-    drawing: they answer ``False`` when it is hidden, when something visible
-    covers it, or when the pointer belongs to a different window.
+    drawing, as it is now: they use its current position, size, scale and
+    visibility, so a drawing that has just been changed answers for what it
+    has become.
     """
 
     __slots__ = ("_drawable",)
@@ -162,27 +242,50 @@ class DrawableMouse:
 class Drawable:
     """One remembered drawing: a line, a rectangle or some text.
 
-    Made by the methods on :class:`DrawList`, never directly. It knows how to
-    draw itself into a frame buffer and what area it occupies, and nothing
-    about windows or backends.
+    Made by the methods on :class:`DrawList`, never directly, and kept
+    afterwards -- the call that draws it hands it back so it can be changed::
+
+        score = menu.text(10, 10, "Score: 0", color.white)
+        score.set.text("Score: 100")
+        score.set.color(color.blue)
+
+    Changing anything shows up in the next frame, and in what the mouse finds:
+    there is one copy of the position and size, and drawing and hit-testing
+    both read it.
     """
 
-    __slots__ = ("kind", "args", "colour", "_scale", "_visible", "_list",
-                 "_removed", "_mouse", "set", "add", "remove")
+    __slots__ = ("kind", "x", "y", "end_x", "end_y", "width", "height",
+                 "message", "colour", "_scale", "_visible", "_list",
+                 "_removed", "_mouse", "set", "add", "remove", "move")
 
-    def __init__(self, kind: str, args: tuple, colour: tuple,
-                 owner: "DrawList") -> None:
+    #: Which properties each kind of drawing has, for error messages.
+    PROPERTIES = {
+        "line": ("color", "scale"),
+        "rect": ("color", "scale"),
+        "text": ("text", "color", "scale"),
+    }
+
+    def __init__(self, kind: str, colour: tuple, owner: "DrawList", *,
+                 x: int = 0, y: int = 0, end_x: int = 0, end_y: int = 0,
+                 width: int = 0, height: int = 0, message: str = "") -> None:
         self.kind = kind
-        self.args = args
+        self.x = x
+        self.y = y
+        self.end_x = end_x
+        self.end_y = end_y
+        self.width = width
+        self.height = height
+        self.message = message
         self.colour = colour
         self._scale = 1.0
         self._visible = True
         self._list = owner
         self._removed = False
         self._mouse = DrawableMouse(self)
-        self.set = _Scaling(self, "set")
-        self.add = _Scaling(self, "add")
-        self.remove = _Scaling(self, "remove")
+        self.set = _Setter(self)
+        self.add = _Adjuster(self, "add")
+        self.remove = _Adjuster(self, "remove")
+        self.move = _DrawingMovement(self)
 
     # --- state ------------------------------------------------------------
 
@@ -195,6 +298,11 @@ class Drawable:
     def scale(self) -> float:
         """How much bigger than normal this drawing is. 1.0 is normal."""
         return self._scale
+
+    @property
+    def position(self) -> tuple[int, int]:
+        """``(x, y)`` of the drawing's top-left corner."""
+        return (self.x, self.y)
 
     @property
     def visible(self) -> bool:
@@ -231,6 +339,17 @@ class Drawable:
                 f"still need it."
             )
 
+    def _require(self, kind: str, what: str) -> None:
+        """Refuse a property this kind of drawing does not have."""
+        if self.kind != kind:
+            names = {"line": "A line", "rect": "A rectangle", "text": "Text"}
+            has = ", ".join(self.PROPERTIES[self.kind])
+            raise UiError(
+                f"{names[self.kind]} has no {what} to change. "
+                f"set.{what}(...) works on {kind} drawings; this one has "
+                f"{has}."
+            )
+
     def _application_and_window(self):
         """The running application and the window this drawing appears in."""
         from trjoludus.app import current_application
@@ -246,28 +365,30 @@ class Drawable:
     def bounds(self) -> tuple[int, int, int, int]:
         """``(left, top, right, bottom)`` of the area this occupies.
 
-        Scaling grows a drawing from its top-left corner, which is where its
-        position already is -- so scaling never moves the corner a game placed.
+        Read from the drawing's current values, so a change of text, size or
+        scale moves the hitbox with it. Scaling grows a drawing from its
+        top-left corner, which is where its position already is -- so scaling
+        never moves the corner a game placed.
         """
         scale = self._scale
         if self.kind == "rect":
-            x, y, width, height = self.args
-            return (x, y, x + round(width * scale), y + round(height * scale))
+            return (self.x, self.y,
+                    self.x + round(self.width * scale),
+                    self.y + round(self.height * scale))
         if self.kind == "text":
-            text, x, y = self.args
-            width, height = font.measure(text)
-            return (x, y, x + round(width * scale), y + round(height * scale))
-        # A line: the box its two ends span.
+            width, height = font.measure(self.message)
+            return (self.x, self.y,
+                    self.x + round(width * scale),
+                    self.y + round(height * scale))
         x, y, end_x, end_y = self._scaled_line()
         return (min(x, end_x), min(y, end_y), max(x, end_x) + 1,
                 max(y, end_y) + 1)
 
     def _scaled_line(self) -> tuple[int, int, int, int]:
-        x, y, end_x, end_y = self.args
         scale = self._scale
-        return (x, y,
-                x + round((end_x - x) * scale),
-                y + round((end_y - y) * scale))
+        return (self.x, self.y,
+                self.x + round((self.end_x - self.x) * scale),
+                self.y + round((self.end_y - self.y) * scale))
 
     def contains(self, x: int, y: int) -> bool:
         """Whether a point falls inside this drawing's area."""
@@ -277,7 +398,7 @@ class Drawable:
     # --- drawing ----------------------------------------------------------
 
     def render(self, framebuffer) -> None:
-        """Draw this, at its current scale."""
+        """Draw this, as it is now."""
         if not self._visible:
             return
         scale = self._scale
@@ -287,16 +408,15 @@ class Drawable:
             return
 
         if self.kind == "rect":
-            x, y, width, height = self.args
-            framebuffer.fill_rect(x, y, round(width * scale),
-                                  round(height * scale), self.colour)
+            framebuffer.fill_rect(self.x, self.y, round(self.width * scale),
+                                  round(self.height * scale), self.colour)
             return
 
-        text, x, y = self.args
         if scale == 1.0:
-            framebuffer.draw_text(text, x, y, self.colour)
+            framebuffer.draw_text(self.message, self.x, self.y, self.colour)
             return
-        self._render_scaled_text(framebuffer, text, x, y, scale)
+        self._render_scaled_text(framebuffer, self.message, self.x, self.y,
+                                 scale)
 
     def _render_scaled_text(self, framebuffer, text, x, y, scale) -> None:
         """Draw text larger by turning each font pixel into a block.
@@ -321,7 +441,10 @@ class Drawable:
             pen += font.CHARACTER_WIDTH + font.SPACING
 
     def __repr__(self) -> str:
-        return f"Drawable({self.kind!r}, scale={self._scale}, {self.args!r})"
+        what = self.message if self.kind == "text" else ""
+        detail = f" {what!r}" if what else ""
+        return (f"Drawable({self.kind!r} at ({self.x}, {self.y}), "
+                f"scale={self._scale}{detail})")
 
 
 class DrawList:
@@ -377,10 +500,10 @@ class DrawList:
         for label, value in (("x", x), ("y", y),
                              ("end_x", end_x), ("end_y", end_y)):
             _whole_number(value, label)
-        return self._add(
-            Drawable("line", (x, y, end_x, end_y),
-                     color_module.check(colour, "a line colour"), self)
-        )
+        return self._add(Drawable(
+            "line", color_module.check(colour, "a line colour"), self,
+            x=x, y=y, end_x=end_x, end_y=end_y,
+        ))
 
     def rect(self, x: int, y: int, width: int, height: int,
              colour) -> Drawable:
@@ -394,10 +517,10 @@ class DrawList:
                 f"a rectangle cannot have a negative size, got "
                 f"{width}x{height}"
             )
-        return self._add(
-            Drawable("rect", (x, y, width, height),
-                     color_module.check(colour, "a rectangle colour"), self)
-        )
+        return self._add(Drawable(
+            "rect", color_module.check(colour, "a rectangle colour"), self,
+            x=x, y=y, width=width, height=height,
+        ))
 
     def text(self, x: int, y: int, message: str, colour) -> Drawable:
         """Add text with its top-left corner at ``(x, y)``."""
@@ -408,10 +531,10 @@ class DrawList:
             raise TypeError(
                 f"text must be a string, got {type(message).__name__}"
             )
-        return self._add(
-            Drawable("text", (message, x, y),
-                     color_module.check(colour, "a text colour"), self)
-        )
+        return self._add(Drawable(
+            "text", color_module.check(colour, "a text colour"), self,
+            x=x, y=y, message=message,
+        ))
 
     def _add(self, drawing: Drawable) -> Drawable:
         self._drawings.append(drawing)
