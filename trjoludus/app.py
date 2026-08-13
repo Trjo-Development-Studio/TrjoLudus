@@ -150,6 +150,10 @@ class Application:
         # which input.wait() has to preserve.
         self._input: deque[PendingInput] = deque()
         self._mouse_states: dict[object, MouseState] = {}
+        # Clicks that arrived during the current frame. UI asks about these
+        # rather than taking them off the queue: "was I clicked" is a question
+        # about what happened, not a wait that consumes the answer.
+        self._frame_clicks: list[PendingInput] = []
         self._window = None
         # Deliberately not selected here: constructing an Application must not
         # open a display, so an unset backend is resolved when run() starts.
@@ -224,6 +228,7 @@ class Application:
             self._window = None
             self._input.clear()
             self._mouse_states.clear()
+            self._frame_clicks.clear()
             # Unread input belonged to this run, and so did the last key. A
             # second game must not start out holding the first one's press.
             _key._set(None)
@@ -254,6 +259,9 @@ class Application:
         """Run frames until the game asks to stop."""
         game = self._game
         while not game.quit_requested and self._backend.keeps_application_alive:
+            # A click belongs to the frame it arrived in, so what UI can ask
+            # about starts empty each time round.
+            self._frame_clicks.clear()
             # The whole batch is delivered even if a handler calls quit():
             # these events already happened, and dropping some of them would
             # make delivery depend on where in the batch quit() landed.
@@ -287,14 +295,26 @@ class Application:
                 state.moved(event.x, event.y)
             elif isinstance(event, MouseButtonPressed):
                 state.button_down(event.button, event.x, event.y)
-                self._input.append(
-                    PendingInput("mouse", event.button, window,
-                                 event.x, event.y)
-                )
+                click = PendingInput("mouse", event.button, window,
+                                     event.x, event.y)
+                self._input.append(click)
+                self._frame_clicks.append(click)
             elif isinstance(event, MouseButtonReleased):
                 state.button_up(event.button, event.x, event.y)
             else:
                 self._game.on_event(event)
+
+    def clicks_this_frame(self, window=None) -> tuple[PendingInput, ...]:
+        """Clicks that arrived this frame, in the window given.
+
+        Asking does not consume them: several things may want to know about
+        the same click, and a UI query is not a wait. They are dropped when
+        the next frame begins.
+        """
+        window = self._window if window is None else window
+        return tuple(
+            click for click in self._frame_clicks if click.window is window
+        )
 
     def mouse_state(self, window=None) -> MouseState:
         """The pointer state for one window, created on first use.

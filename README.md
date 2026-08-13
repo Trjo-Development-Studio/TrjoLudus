@@ -52,7 +52,7 @@ trjoludus/
     create.py          creating persistent game objects
     draw.py            drawing the user interface
     color.py           named colours
-    ui.py              drawing lists
+    ui.py              drawing lists and the interactive drawings in them
     font.py            the built-in text font
     keyboard.py        waiting for key presses
     mouse.py           pointer position, buttons and clicks
@@ -123,6 +123,7 @@ python examples/image_test.py
 python examples/keyboard_test.py
 python examples/mouse_test.py
 python examples/ui_test.py
+python examples/button_test.py
 ```
 
 ### Drawing a user interface
@@ -158,6 +159,37 @@ start_menu.show()
 A list keeps what it holds until you `clear()` or `destroy()` it, and lists are
 drawn in the order they were made. Reusing a name is an error rather than a
 silent replacement. UI is drawn on top of the game's objects.
+
+### Buttons that react
+
+Every drawing call hands back the thing it drew, which you can scale and ask
+about the mouse:
+
+```python
+play_button = menu.rect(160, 120, 160, 60, color.gray)
+
+if play_button.mouse.hover():
+    play_button.set.scale(1.1)
+else:
+    play_button.set.scale(1.0)
+
+if play_button.mouse.clicked():
+    start_game()
+```
+
+`hover()` is true while the pointer is inside; `clicked()` is true for the one
+frame a button went down on it, so **holding the mouse down does not keep
+firing**. Both account for scale, and both are false while the drawing or its
+list is hidden.
+
+Where drawings overlap, the one **drawn last** gets the interaction -- the one
+you can actually see. A drawing only answers to the mouse in its own window.
+
+Scale grows a drawing from its top-left corner, so scaling never moves the
+corner you placed. `set.scale(2)`, `add.scale(0.25)` and `remove.scale(0.25)`
+are the three ways to change it.
+
+See [`examples/button_test.py`](examples/button_test.py).
 
 Text uses a small built-in font, so it needs no font files: printable ASCII at
 5x7 pixels per character. See [`examples/ui_test.py`](examples/ui_test.py).

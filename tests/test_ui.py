@@ -271,10 +271,15 @@ class TestDrawingLists(UiTestCase):
         menu.text(1, 1, "Play", color.white)
         self.assertEqual(len(menu), 3)
 
-    def test_list_calls_can_be_chained(self):
+    def test_drawing_returns_the_thing_that_was_drawn(self):
+        """So it can be held, scaled and asked about the mouse."""
+        from trjoludus.ui import Drawable
+
         menu = draw.list("menu")
-        menu.rect(0, 0, 5, 5, color.blue).text(1, 1, "Play", color.white)
-        self.assertEqual(len(menu), 2)
+        button = menu.rect(0, 0, 5, 5, color.blue)
+        self.assertIsInstance(button, Drawable)
+        self.assertIs(button.list, menu)
+        self.assertEqual(menu.drawings(), (button,))
 
     def test_contents_are_kept_until_changed(self):
         menu = draw.list("menu")
