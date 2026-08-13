@@ -39,11 +39,33 @@ from trjoludus.events import (
     MouseButtonReleased,
     MouseMoved,
 )
+from trjoludus.mouse import MouseState
 from trjoludus.render import Framebuffer
 from trjoludus.scene import current_scene
 from trjoludus.ui import current_ui
 
-__all__ = ["Application", "current_application", "run"]
+__all__ = ["Application", "PendingInput", "current_application", "run"]
+
+
+class PendingInput:
+    """One piece of input waiting to be read.
+
+    Remembers which window it came from, so input is never attributed to the
+    wrong one once there is more than a single window to confuse.
+    """
+
+    __slots__ = ("kind", "value", "window", "x", "y")
+
+    def __init__(self, kind: str, value: str, window,
+                 x: int = 0, y: int = 0) -> None:
+        self.kind = kind
+        self.value = value
+        self.window = window
+        self.x = x
+        self.y = y
+
+    def __repr__(self) -> str:
+        return f"PendingInput({self.kind!r}, {self.value!r})"
 
 #: How long to pause between polls while waiting for a key, in seconds. Small
 #: enough to feel instant, large enough that waiting does not spin a CPU core.
@@ -123,8 +145,11 @@ class Application:
         self._size = _validate_size(size)
         self._clock = Clock(max_fps=max_fps)
         self._framebuffer = Framebuffer(*self._size)
-        self._keys: deque[str] = deque()
-        self._clicks: deque[tuple[str, int, int]] = deque()
+        # One queue, in arrival order, holding every kind of input. Separate
+        # queues per kind would lose the order between a key and a click,
+        # which input.wait() has to preserve.
+        self._input: deque[PendingInput] = deque()
+        self._mouse_states: dict[object, MouseState] = {}
         self._window = None
         # Deliberately not selected here: constructing an Application must not
         # open a display, so an unset backend is resolved when run() starts.
@@ -195,13 +220,10 @@ class Application:
         finally:
             from trjoludus.keyboard import key as _key
 
-            from trjoludus import mouse as _mouse
-
             _running = previous
             self._window = None
-            self._keys.clear()
-            self._clicks.clear()
-            _mouse._reset()
+            self._input.clear()
+            self._mouse_states.clear()
             # Unread input belonged to this run, and so did the last key. A
             # second game must not start out holding the first one's press.
             _key._set(None)
@@ -243,79 +265,143 @@ class Application:
             game.on_update(self._clock.tick())
             self._render(window)
 
-    def _deliver(self, events) -> None:
-        """Route one batch of events.
+    def _deliver(self, events, window=None) -> None:
+        """Route one batch of events from ``window``.
 
-        Input goes into queues for the waiting calls rather than to
-        ``on_event``. Delivering it to both would show a game the same press
+        Input is queued for the waiting calls rather than delivered to
+        ``on_event``. Sending it to both would show a game the same press
         twice and leave it unclear which one owned it.
 
-        Pointer movement is state, not input: it updates where the mouse is
-        and queues nothing, so a wait is not ended by someone nudging the
-        mouse.
+        Every queued item remembers the window it came from, so input can
+        never be attributed to the wrong one. Pointer movement is state rather
+        than input: it updates where the mouse is in that window and queues
+        nothing, so a wait is not ended by someone nudging the mouse.
         """
-        from trjoludus import mouse
+        window = self._window if window is None else window
+        state = self.mouse_state(window)
 
         for event in events:
             if isinstance(event, KeyPressed):
-                self._keys.append(event.key)
+                self._input.append(PendingInput("key", event.key, window))
             elif isinstance(event, MouseMoved):
-                mouse._moved(event.x, event.y)
+                state.moved(event.x, event.y)
             elif isinstance(event, MouseButtonPressed):
-                mouse._button_down(event.button, event.x, event.y)
-                self._clicks.append((event.button, event.x, event.y))
+                state.button_down(event.button, event.x, event.y)
+                self._input.append(
+                    PendingInput("mouse", event.button, window,
+                                 event.x, event.y)
+                )
             elif isinstance(event, MouseButtonReleased):
-                mouse._button_up(event.button, event.x, event.y)
+                state.button_up(event.button, event.x, event.y)
             else:
                 self._game.on_event(event)
 
-    def _wait_for_key(self) -> str | None:
-        """Block until a key press is available, and return its name."""
-        return self._wait_for(self._keys, "keyboard.wait()")
+    def mouse_state(self, window=None) -> MouseState:
+        """The pointer state for one window, created on first use.
 
-    def _wait_for_mouse(self) -> tuple[str, int, int] | None:
-        """Block until a mouse button is pressed.
-
-        Returns ``(button, x, y)`` -- the position is the one the click
-        happened at, not wherever the pointer has drifted to since, so a game
-        acting on a click acts on the right place.
+        Per window because a position only means anything against a particular
+        drawable area. A game has one window today, so the module-level
+        :mod:`trjoludus.mouse` names read this; several windows would each
+        have their own without the input system changing.
         """
-        return self._wait_for(self._clicks, "mouse.wait()")
+        window = self._window if window is None else window
+        state = self._mouse_states.get(window)
+        if state is None:
+            state = MouseState()
+            self._mouse_states[window] = state
+        return state
 
-    def _wait_for(self, queue: deque, called: str) -> str | None:
-        """Block until ``queue`` has something in it, and take the oldest.
+    def wait_for_input(self, kind: str | None = None) -> PendingInput | None:
+        """Block until input arrives, and record it where a game reads it.
 
-        Input is queued and handed out oldest first, each item returned
-        exactly once. Something that arrived earlier and has not been answered
-        yet comes back immediately -- that is a new event, not a repeat of the
-        last one.
+        Args:
+            kind: ``"key"``, ``"mouse"``, or ``None`` for whichever comes
+                first.
+
+        Returns:
+            The item taken, or ``None`` if the wait gave up.
+
+        Input is queued in arrival order and handed out oldest first, each
+        item taken exactly once. Asking for one kind leaves the other kind
+        untouched in the queue rather than discarding it, so a key pressed
+        while a game waits for a click is still there for the keyboard to
+        read.
 
         Pumps the same window and delivers other events the way the main loop
         does, so a close request still reaches the game while a wait is in
-        progress. Returns ``None`` rather than waiting forever if the game
-        quits, or if its last window disappears -- a window can be destroyed
-        without a close request ever being sent, and then the input being
-        waited for can never arrive.
+        progress. Gives up -- returning ``None`` -- if the game quits or its
+        last window disappears. A window can be destroyed without any close
+        request being sent, and then the input being waited for can never
+        arrive, so every blocking call has to stop for that as well.
 
         One implementation for every kind of waiting, so a new one cannot
         quietly miss a reason to stop.
         """
         if self._window is None:  # pragma: no cover -- run() sets it
-            raise TrjoLudusError(f"{called} needs a running game.")
+            raise TrjoLudusError("waiting for input needs a running game.")
 
         while True:
-            if queue:
-                return queue.popleft()
+            taken = self._take(kind)
+            if taken is not None:
+                self._record(taken)
+                return taken
             if self._game.quit_requested:
-                return None
+                break
             if not self._backend.keeps_application_alive:
-                return None
+                break
             self._deliver(self._window.poll_events())
-            if queue or self._game.quit_requested:
+            if self._peek(kind) or self._game.quit_requested:
                 continue
             # Nothing arrived. Pause briefly rather than spin: this is pacing,
             # not a wait for something that has already happened.
             sleep(KEY_POLL_INTERVAL)
+
+        self._record(None, kind)
+        return None
+
+    def _peek(self, kind: str | None) -> bool:
+        """Whether the queue holds anything of the kind being waited for."""
+        return any(kind is None or item.kind == kind for item in self._input)
+
+    def _take(self, kind: str | None) -> "PendingInput | None":
+        """Remove and return the oldest item of ``kind``, if there is one.
+
+        Scans rather than popping the front, so waiting for one kind does not
+        disturb the other. The queue holds a handful of items at most, and
+        order is what matters here rather than the cost of looking.
+        """
+        for index, item in enumerate(self._input):
+            if kind is None or item.kind == kind:
+                del self._input[index]
+                return item
+        return None
+
+    def _record(self, taken: "PendingInput | None",
+                kind: str | None = None) -> None:
+        """Put what was taken where a game reads it.
+
+        A wait that gave up clears whatever it was waiting for, so a stale key
+        or click cannot be acted on during shutdown.
+        """
+        from trjoludus.keyboard import key as key_value
+
+        if taken is None:
+            if kind in (None, "key"):
+                key_value._set(None)
+            if kind in (None, "mouse"):
+                self.mouse_state().button = None
+            return
+
+        if taken.kind == "key":
+            key_value._set(taken.value)
+            return
+
+        state = self.mouse_state(taken.window)
+        state.button = taken.value
+        # Report where the click happened. Several events can arrive in one
+        # batch, so the pointer may already have moved on; the click's own
+        # position is what a game acting on it means.
+        state.moved(taken.x, taken.y)
 
     def _render(self, window) -> None:
         """Draw the scene and hand the finished frame to the backend.

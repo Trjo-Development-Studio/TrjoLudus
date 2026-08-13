@@ -11,6 +11,10 @@
 updates :data:`key`, so a game reads the key where it needs it instead of
 threading a variable through.
 
+**Only the keyboard ends this wait.** A mouse click does not, and is not
+thrown away either -- it stays queued for :func:`trjoludus.mouse.wait` or
+:func:`trjoludus.input.wait`.
+
 **It waits for input that has not been answered yet.** Every press is consumed
 by exactly one :func:`wait`. Press W once and call :func:`wait` twice, and the
 second call keeps waiting -- it does not leave ``key`` sitting on ``"W"`` and
@@ -98,10 +102,9 @@ def wait(what) -> None:
         Nothing. The result goes into :data:`key`; there is deliberately no
         value to assign, so there is one way to read the key.
 
-    If the game asks to stop while waiting -- because it honoured a close
-    request -- the wait ends and :data:`key` becomes ``None`` rather than
-    keeping the previous press, so a stale key cannot be acted on during
-    shutdown.
+    If the game asks to stop while waiting, or its last window disappears, the
+    wait ends and :data:`key` becomes ``None`` rather than keeping the
+    previous press, so a stale key cannot be acted on during shutdown.
 
     Raises:
         TrjoLudusError: If called while no game is running, or if ``what`` is
@@ -121,4 +124,4 @@ def wait(what) -> None:
             "keyboard.wait() only works while a game is running. Call it from "
             "on_start or on_update, inside a game started with tl.run()."
         )
-    key._set(application._wait_for_key())
+    application.wait_for_input(kind="key")

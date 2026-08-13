@@ -123,9 +123,10 @@ class TestPosition(MouseTestCase):
 
     def test_reading_the_position_never_goes_stale(self):
         """It is looked up, not copied, so there is nothing to refresh."""
-        mouse._moved(5, 6)
+        state = mouse.active_state()
+        state.moved(5, 6)
         first = mouse.position
-        mouse._moved(50, 60)
+        state.moved(50, 60)
         self.assertEqual(first, (5, 6))
         self.assertEqual(mouse.position, (50, 60))
 

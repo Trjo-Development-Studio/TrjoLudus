@@ -56,7 +56,7 @@ trjoludus/
     font.py            the built-in text font
     keyboard.py        waiting for key presses
     mouse.py           pointer position, buttons and clicks
-    input.py           what the waiting calls can wait for
+    input.py           what the waiting calls can wait for, and input.wait()
     scene.py           named game objects and the scene holding them
     image.py           images, and PNG decoding
     render.py          the frame buffer objects are composited into
@@ -216,6 +216,27 @@ as `keyboard.wait` does with keys.
 Moving the mouse does not end a wait -- only a button does. Afterwards
 `mouse.x` and `mouse.y` report where that click happened. The buttons are
 `"LEFT"`, `"RIGHT"` and `"MIDDLE"`; the scroll wheel is not reported yet.
+
+### Waiting for either
+
+```python
+from trjoludus import input, key, mouse
+
+input.wait()
+
+if input.type == input.key:
+    print(key)
+elif input.type == input.mouse:
+    print(mouse.button)
+```
+
+The three waits share one queue in arrival order. `keyboard.wait` answers only
+to keys and `mouse.wait` only to the mouse -- and the kind you did not ask for
+is **kept**, not thrown away, so a click that arrives while you wait for a key
+is still there afterwards. `input.wait()` takes whichever came first.
+
+Every wait ends if the game quits or its last window disappears, so nothing
+can block forever on input that can no longer arrive.
 
 See [`examples/mouse_test.py`](examples/mouse_test.py).
 
