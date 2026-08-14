@@ -190,9 +190,23 @@ class EngineState:
         #: are the same files over and over. Images are immutable, so handing
         #: the same one out again is not a shortcut with consequences.
         #:
-        #: Belongs to the run, like everything else here. A second run decodes
-        #: afresh rather than inheriting whatever the first one happened to
-        #: load.
+        #: One image may appear under more than one key -- the spelling a game
+        #: used, and the resolved path -- so that asking again with the same
+        #: string costs a dictionary lookup and no filesystem call.
+        #: :func:`trjoludus.image.loaded_images` counts images rather than
+        #: keys.
+        #:
+        #: **Never invalidated.** A file that changes on disk during a run
+        #: keeps the image already decoded from it. There is no file watching,
+        #: no modification-time check and no eviction: a run is short, and a
+        #: game that wants the new picture starts a new run.
+        #:
+        #: **Released with the run.** Belongs to this state, like everything
+        #: else here, so a second run decodes afresh rather than inheriting
+        #: whatever the first happened to load. Nothing here is process-wide.
+        #:
+        #: Python owns every one of these. Native code borrows an image's
+        #: bytes for the length of one drawing call and never keeps them.
         self.resources: dict = {}
 
     def __repr__(self) -> str:

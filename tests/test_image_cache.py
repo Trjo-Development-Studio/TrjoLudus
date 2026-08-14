@@ -17,7 +17,7 @@ from pathlib import Path
 
 from trjoludus import Game, GameObject, create, engine
 from trjoludus.app import Application
-from trjoludus.image import Image, ImageError, load_image
+from trjoludus.image import Image, ImageError, load_image, loaded_images
 from trjoludus.platform.null import NullBackend
 from trjoludus.scene import current_scene
 from trjoludus.ui import current_ui
@@ -67,11 +67,16 @@ class TestItDecodesOnce(CacheTestCase):
 
     def test_the_image_is_kept_by_the_run(self):
         load_image(self.red)
-        self.assertEqual(len(self.resources()), 1)
+        self.assertEqual(loaded_images(), 1)
         load_image(self.red)
-        self.assertEqual(len(self.resources()), 1)
+        self.assertEqual(loaded_images(), 1)
 
-    def test_a_relative_and_an_absolute_path_are_one_entry(self):
+    def test_different_spellings_are_one_image(self):
+        """Several names for a file, one decode.
+
+        They occupy several keys -- each spelling remembered so that asking
+        again is a dictionary lookup -- but they are the same image.
+        """
         import os
 
         here = os.getcwd()
@@ -82,34 +87,91 @@ class TestItDecodesOnce(CacheTestCase):
         third = load_image(self.red)
         self.assertIs(first, second)
         self.assertIs(first, third)
-        self.assertEqual(len(self.resources()), 1)
+        self.assertEqual(loaded_images(), 1)
+
+    def test_a_symlink_is_the_same_image(self):
+        """Resolution still happens, just only when a spelling is new."""
+        import os
+
+        link = self.folder / "alias.png"
+        try:
+            os.symlink(self.red, link)
+        except (OSError, NotImplementedError):   # pragma: no cover
+            self.skipTest("this filesystem has no symlinks")
+        self.assertIs(load_image(self.red), load_image(link))
+        self.assertEqual(loaded_images(), 1)
+
+    def test_a_repeated_load_touches_no_filesystem(self):
+        """The point of the fix: a hit is a lookup and nothing else."""
+        import pathlib as _pathlib
+
+        load_image(self.red)
+        calls = []
+        real = _pathlib.Path.resolve
+
+        def counting(self, *args, **kwargs):
+            calls.append(1)
+            return real(self, *args, **kwargs)
+
+        _pathlib.Path.resolve = counting
+        self.addCleanup(setattr, _pathlib.Path, "resolve", real)
+        for _ in range(20):
+            load_image(self.red)
+        self.assertEqual(calls, [], "a cache hit resolved the path")
+
+    def test_a_new_spelling_still_resolves_once(self):
+        import os
+        import pathlib as _pathlib
+
+        here = os.getcwd()
+        self.addCleanup(os.chdir, here)
+        os.chdir(self.folder)
+        load_image(self.red)
+
+        calls = []
+        real = _pathlib.Path.resolve
+
+        def counting(self, *args, **kwargs):
+            calls.append(1)
+            return real(self, *args, **kwargs)
+
+        _pathlib.Path.resolve = counting
+        self.addCleanup(setattr, _pathlib.Path, "resolve", real)
+        load_image("red.png")
+        self.assertEqual(len(calls), 1, "a new spelling must resolve once")
+        load_image("red.png")
+        self.assertEqual(len(calls), 1, "and only once")
+
+    def test_distinct_files_stay_distinct(self):
+        self.assertIsNot(load_image(self.red), load_image(self.green))
+        self.assertEqual(loaded_images(), 2)
 
     def test_creating_an_object_and_switching_to_it_decodes_once(self):
         create.image(0, 0, self.red, "player")
         GameObject("player").set.image(self.red)
         GameObject("player").set.image(self.green)
         GameObject("player").set.image(self.red)
-        self.assertEqual(len(self.resources()), 2)
+        self.assertEqual(loaded_images(), 2)
 
     def test_an_animation_reuses_what_is_already_loaded(self):
         create.image(0, 0, self.frames[0], "player")
         GameObject("player").animation.add("walk", self.frames)
         # Four frames, the first of which was already the object's picture.
-        self.assertEqual(len(self.resources()), 4)
+        self.assertEqual(loaded_images(), 4)
 
     def test_two_animations_sharing_frames_decode_them_once(self):
         create.image(0, 0, self.red, "player")
         player = GameObject("player")
         player.animation.add("walk", self.frames)
         player.animation.add("run", self.frames)
-        self.assertEqual(len(self.resources()), 5)
+        self.assertEqual(loaded_images(), 5)
 
     def test_two_objects_can_share_one_image(self):
         create.image(0, 0, self.red, "a")
         create.image(0, 0, self.red, "b")
         self.assertIs(current_scene().require("a").image,
                       current_scene().require("b").image)
-        self.assertEqual(len(self.resources()), 1)
+        self.assertEqual(loaded_images(), 1)
 
     def test_the_image_is_the_same_object_the_animation_holds(self):
         create.image(0, 0, self.frames[0], "player")
@@ -256,6 +318,86 @@ class TestLifetime(CacheTestCase):
                         "_image_cache", "_images", "_decoded"):
                     suspicious.append(path.name)
         self.assertEqual(suspicious, [])
+
+
+class TestExplicitRustWithoutALibrary(CacheTestCase):
+    """What `image.engine = "rust"` does when there is nothing to run.
+
+    The audit found this had no test of its own: the backend tests covered it
+    generically and for rendering, but the one subsystem this milestone
+    migrated was checked only by hand.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from trjoludus.native import imaging, library, registry
+
+        self._library = library._library
+        self._problem = library._problem
+        library._library = None
+        library._problem = "no native library found (test)"
+        imaging.forget()
+        registry.reset()
+
+        def restore():
+            library._library = self._library
+            library._problem = self._problem
+            imaging.forget()
+            registry.reset()
+
+        self.addCleanup(restore)
+
+    def test_loading_an_image_says_the_native_one_is_missing(self):
+        from trjoludus import image as image_module
+        from trjoludus.native import EngineError
+
+        image_module.engine = "rust"
+        with self.assertRaises(EngineError) as caught:
+            load_image(self.red)
+        message = str(caught.exception)
+        self.assertIn("image.engine is 'rust'", message)
+        self.assertIn("no native implementation of image", message)
+
+    def test_the_message_says_what_to_do_about_it(self):
+        from trjoludus import image as image_module
+        from trjoludus.native import EngineError
+
+        image_module.engine = "rust"
+        with self.assertRaises(EngineError) as caught:
+            load_image(self.red)
+        self.assertIn("'auto'", str(caught.exception))
+
+    def test_building_an_image_says_so_too(self):
+        """Opacity is image processing, so it uses the image backend."""
+        from trjoludus import image as image_module
+        from trjoludus.native import EngineError
+
+        image_module.engine = "rust"
+        with self.assertRaises(EngineError):
+            Image(1, 1, bytes([1, 2, 3, 255]))
+
+    def test_python_still_works_with_no_library(self):
+        from trjoludus import image as image_module
+
+        image_module.engine = "python"
+        loaded = load_image(self.red)
+        self.assertEqual(loaded.size, (4, 4))
+        self.assertTrue(loaded.is_opaque)
+
+    def test_auto_still_works_with_no_library(self):
+        from trjoludus import image as image_module
+
+        image_module.engine = "auto"
+        self.assertEqual(load_image(self.red).size, (4, 4))
+
+    def test_nothing_was_cached_by_the_failure(self):
+        from trjoludus import image as image_module
+        from trjoludus.native import EngineError
+
+        image_module.engine = "rust"
+        with self.assertRaises(EngineError):
+            load_image(self.red)
+        self.assertEqual(loaded_images(), 0)
 
 
 class TestBothBackendsUseTheCache(CacheTestCase):

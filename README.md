@@ -819,6 +819,10 @@ sharing one is simply two objects looking at the same picture.
 The images a run loads are released when it finishes, so a second `run()`
 starts with nothing held.
 
+If a file changes on disk while a game is running, the picture already loaded
+from it stays -- TrjoLudus does not watch files. Restart the game to pick up
+the new one.
+
 ### How much faster is it?
 
 Rendering the same scenes into a 640x480 frame, on this machine:

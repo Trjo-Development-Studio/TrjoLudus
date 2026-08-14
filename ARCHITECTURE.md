@@ -741,6 +741,7 @@ read the same number; they do not each keep one that is supposed to agree.
 | --- | --- | --- | --- |
 | object position, scale, size, flags | `engine.ObjectTable` | the table | borrowed, not copied |
 | object name, image, animator | `scene.SceneObject` | Python | image pixels borrowed per draw |
+| decoded images | `engine.EngineState.resources` | Python | pixels borrowed per draw; never owned natively |
 | the scene | `engine.EngineState.world` | Python | no |
 | drawing lists | `engine.EngineState.drawings` | Python | no -- nothing native reads them yet |
 | timing | `clock.Clock`, lent to the state | Python | no |
@@ -751,6 +752,25 @@ read the same number; they do not each keep one that is supposed to agree.
 An object's numbers are *in the table*. `obj.x` reads it and native code reads
 it, so there is nothing to synchronise -- not because synchronisation is done
 well, but because there is only one copy to begin with.
+
+### Decoded images
+
+`EngineState.resources` is the one place decoded images live. There is no
+second cache in the renderer, none in the animator, and none in Rust.
+
+* **Python owns them.** They are `Image` objects holding `bytes`. Native code
+  borrows those bytes for the length of one drawing call and keeps nothing;
+  nothing native allocates or frees an image.
+* **They belong to the run.** Released when the `EngineState` is, so a second
+  run decodes afresh. Not process-wide.
+* **They are immutable**, which is what makes handing the same one to two
+  objects safe, and what makes caching them safe at all.
+* **They are keyed by path and never invalidated.** A file that changes during
+  a run keeps the image already decoded from it. No watching, no
+  modification-time check, no eviction -- a run is short, and a game that
+  wants the new picture starts a new one. One image may be reachable under
+  more than one spelling, so that asking again costs a dictionary lookup
+  rather than a filesystem call.
 
 ### Struct of arrays
 
@@ -881,7 +901,7 @@ Image decoding is deliberately only half migrated:
 | structure, CRCs, zlib, palettes | `trjoludus/image.py`, Python, always |
 | unfiltering and the opacity scan | `rust/trjoludus-native/src/image.rs` |
 | the binding | `trjoludus/native/imaging.py` |
-| decoded images | `EngineState.resources`, keyed by resolved path |
+| decoded images | `EngineState.resources`, keyed by path, run-scoped |
 
 The two framebuffers are interchangeable: same methods, same arguments, same
 pixels, and `pixels` is a `bytearray` either way. A test asserts the two

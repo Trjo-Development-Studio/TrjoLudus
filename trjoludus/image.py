@@ -13,6 +13,7 @@ both platforms instead of a per-pixel conversion, which in pure Python would
 cost more than everything else in the frame put together.
 """
 
+import os
 import zlib
 from pathlib import Path
 
@@ -56,11 +57,19 @@ def opacity_of(pixels: bytes) -> bool:
     not asked for otherwise; otherwise :func:`_opacity_of`. Both give the same
     answer -- the differential tests are what prove it.
     """
-    native = _native()
+    native, insisted = _backend()
     if native is not None:
         answer = native.opaque(pixels)
         if answer is not None:
             return answer
+        # As in unfilter: falling back is what "auto" means, and is not what
+        # "rust" means.
+        if insisted:
+            raise ImageError(
+                "the native image implementation could not read this image's "
+                "opacity, and image.engine is 'rust'. Set image.engine to "
+                "'auto' to let TrjoLudus fall back to Python."
+            )
     return _opacity_of(pixels)
 
 
@@ -69,10 +78,27 @@ class Image:
 
     Attributes are read-only; an image is a loaded asset, not a canvas.
 
+    **Building one uses the chosen image backend.** Working out whether every
+    pixel is opaque is image processing, so it runs wherever ``image.engine``
+    says image processing runs. That means constructing an ``Image`` raises
+    :class:`~trjoludus.native.registry.EngineError` when a game has set
+    ``image.engine = "rust"`` and there is no native implementation -- the
+    same as any other explicit request that cannot be honoured. It is
+    deliberate: the alternative is a setting that applies to some image work
+    and not the rest.
+
+    Under ``"auto"``, which is the default, this cannot happen: there is
+    always a Python implementation to fall back to.
+
     Args:
         width: Width in pixels.
         height: Height in pixels.
         pixels: ``width * height * 4`` bytes in BGRA order.
+
+    Raises:
+        ImageError: If ``pixels`` is not ``width * height * 4`` bytes.
+        EngineError: If ``image.engine`` is ``"rust"`` and there is no native
+            implementation.
     """
 
     __slots__ = ("_width", "_height", "_pixels", "_opaque")
@@ -130,26 +156,49 @@ def load_image(path) -> Image:
     sharing one is two objects looking at the same picture, which is what they
     asked for.
 
+    **The spelling is looked up before the file is.** Asking again with the
+    same string is a dictionary lookup and nothing else -- no filesystem call
+    at all. Only a spelling that has not been seen is resolved, and if that
+    resolves to something already loaded, the new spelling is remembered as
+    another way of naming it. So ``"player.png"`` and its absolute path are
+    one decoded image, and asking for either a second time costs nothing.
+
+    **The cache is not invalidated.** If a file changes on disk during a run,
+    the image already decoded from it stays. TrjoLudus does not watch files,
+    and a game that wants the new one starts a new run. Everything a run loads
+    is released when it finishes.
+
     Args:
         path: Path to a PNG file.
 
     Raises:
         ImageError: If the file is missing, is not a PNG, or uses a PNG
             feature this decoder does not support.
+        EngineError: If ``image.engine`` is ``"rust"`` and there is no native
+            implementation to decode with.
     """
     from trjoludus import engine
 
-    file = Path(path)
-    # The resolved path, so that "player.png" and "./player.png" are one
-    # entry rather than two decodes of the same file.
-    try:
-        key = str(file.resolve())
-    except OSError:                      # pragma: no cover -- unusual paths
-        key = str(file)
-
     cache = engine.current().resources
-    found = cache.get(key)
+
+    # The spelling as given. A game asking twice asks with the same string,
+    # so this is the case worth making fast.
+    spelling = os.fspath(path)
+    found = cache.get(spelling)
     if found is not None:
+        return found
+
+    file = Path(path)
+    # A spelling not seen before. Resolve it, so that two ways of naming one
+    # file are one decoded image rather than two.
+    try:
+        resolved = str(file.resolve())
+    except OSError:                      # pragma: no cover -- unusual paths
+        resolved = str(file)
+
+    found = cache.get(resolved)
+    if found is not None:
+        cache[spelling] = found
         return found
 
     try:
@@ -164,8 +213,22 @@ def load_image(path) -> Image:
     except ImageError as exc:
         raise ImageError(f"{file}: {exc}") from None
 
-    cache[key] = loaded
+    cache[resolved] = loaded
+    if spelling != resolved:
+        cache[spelling] = loaded
     return loaded
+
+
+def loaded_images(state=None) -> int:
+    """How many distinct images a run is holding.
+
+    Not the number of keys: one image may be reachable by more than one
+    spelling of its path. Engine-internal, for tests and the benchmark.
+    """
+    from trjoludus import engine
+
+    resources = (engine.current() if state is None else state).resources
+    return len({id(image) for image in resources.values()})
 
 
 #: The largest a chunk may claim to be. PNG stores lengths in four bytes but
@@ -324,7 +387,8 @@ def unfilter(raw: bytes, width: int, height: int, samples: int) -> bytes:
     This is the expensive half of decoding: Paeth filtering a 512x512 sprite
     takes the better part of a third of a second in Python.
     """
-    if _native() is None:
+    native, insisted = _backend()
+    if native is None:
         return _unfilter(raw, width, height, samples)
 
     stride = width * samples
@@ -335,34 +399,54 @@ def unfilter(raw: bytes, width: int, height: int, samples: int) -> bytes:
             f"{len(raw)}"
         )
 
-    answer = _native().unfilter(raw, width, height, samples)
+    answer = native.unfilter(raw, width, height, samples)
     if answer.pixels is not None:
         return answer.pixels
     if answer.bad_filter is not None:
         raise ImageError(f"unknown PNG filter type {answer.bad_filter}")
-    # The length was checked above, so this is a size the native side could
-    # not work with. Fall back rather than invent a failure the Python
-    # implementation would not have had.
+
+    # Something the native side could not work with, and not one of the two
+    # failures the Python implementation also has. Under "auto" that is a
+    # reason to use Python; under "rust" it is not -- a game that asked for
+    # the native implementation by name is entitled to hear that it did not
+    # run, rather than to quietly get the other one.
+    if insisted:
+        raise ImageError(
+            "the native image implementation could not unfilter this PNG, "
+            "and image.engine is 'rust'. Set image.engine to 'auto' to let "
+            "TrjoLudus fall back to Python, or to 'python' to use it always."
+        )
     return _unfilter(raw, width, height, samples)
 
 
-def _native():
-    """The native image implementation, or ``None`` to use Python's.
+def _backend():
+    """Which implementation to use, and whether it was insisted upon.
 
-    Asked per image rather than once: a game may set ``image.engine`` before
-    a run, and decoding is cold enough that a dictionary lookup does not
-    matter.
+    Returns ``(native, insisted)``. ``native`` is the native module, or
+    ``None`` to use Python's. ``insisted`` is true when the game asked for
+    ``"rust"`` by name rather than leaving it to ``"auto"`` -- which decides
+    whether a native failure may fall back or must be reported.
+
+    Resolved once per operation and passed along, rather than asked again
+    part-way through: two answers to one question is how a decode could start
+    on one implementation and finish on the other.
+
+    Raises:
+        EngineError: If the game asked for ``"rust"`` and there is no native
+            implementation. An explicit choice is never quietly replaced.
     """
-    from trjoludus.native import PYTHON, registry
+    from trjoludus.native import PYTHON, RUST, registry
 
     system = registry.system("image")
-    if system.engine == PYTHON:
-        return None
-    if system.resolve() != PYTHON:
-        from trjoludus.native import imaging
+    wanted = system.engine
+    if wanted == PYTHON:
+        return None, False
+    if system.resolve() == PYTHON:
+        return None, False
 
-        return imaging
-    return None
+    from trjoludus.native import imaging
+
+    return imaging, wanted == RUST
 
 
 def _unfilter(raw: bytes, width: int, height: int, samples: int) -> bytes:

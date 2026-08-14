@@ -462,6 +462,112 @@ class TestBruteForceCorruption(ImageEquivalence):
                 self.assertEqual(by_python, by_rust)
 
 
+class TestTheFallbackContract(ImageEquivalence):
+    """"auto" may fall back to Python. "rust" may not.
+
+    The audit found both hot-path wrappers falling back whatever the game had
+    asked for. The paths were unreachable, which is why nothing failed -- and
+    exactly why it was worth fixing before something made them reachable.
+    """
+
+    def native_refusing(self):
+        """Make the native side answer "I could not" to everything."""
+        from trjoludus.native import imaging
+
+        class Refuses:
+            @staticmethod
+            def unfilter(raw, width, height, samples):
+                return imaging.Unfiltered()      # no pixels, no reason
+
+            @staticmethod
+            def opaque(pixels):
+                return None
+
+        return Refuses
+
+    def test_auto_falls_back_when_the_native_side_cannot(self):
+        from trjoludus import image as module
+        from trjoludus.native import registry
+
+        registry.system("image").engine = "auto"
+        real = module._backend
+        module._backend = lambda: (self.native_refusing(), False)
+        self.addCleanup(setattr, module, "_backend", real)
+
+        raw = scanlines(4, 2, 4, 0)
+        self.assertEqual(module.unfilter(raw, 4, 2, 4),
+                         module._unfilter(raw, 4, 2, 4))
+        self.assertTrue(module.opacity_of(bytes([1, 2, 3, 255])))
+
+    def test_rust_refuses_rather_than_falling_back(self):
+        from trjoludus import image as module
+        from trjoludus.native import registry
+
+        registry.system("image").engine = "rust"
+        real = module._backend
+        module._backend = lambda: (self.native_refusing(), True)
+        self.addCleanup(setattr, module, "_backend", real)
+
+        with self.assertRaises(ImageError) as caught:
+            module.unfilter(scanlines(4, 2, 4, 0), 4, 2, 4)
+        self.assertIn("image.engine is 'rust'", str(caught.exception))
+
+        with self.assertRaises(ImageError) as caught:
+            module.opacity_of(bytes([1, 2, 3, 255]))
+        self.assertIn("image.engine is 'rust'", str(caught.exception))
+
+    def test_the_refusal_says_what_to_do(self):
+        from trjoludus import image as module
+        from trjoludus.native import registry
+
+        registry.system("image").engine = "rust"
+        real = module._backend
+        module._backend = lambda: (self.native_refusing(), True)
+        self.addCleanup(setattr, module, "_backend", real)
+
+        with self.assertRaises(ImageError) as caught:
+            module.unfilter(scanlines(4, 2, 4, 0), 4, 2, 4)
+        self.assertIn("'auto'", str(caught.exception))
+
+    def test_real_failures_still_raise_the_messages_they_always_did(self):
+        """The two failures Python also has are unaffected by any of this."""
+        from trjoludus import image as module
+        from trjoludus.native import registry
+
+        for engine in ("auto", "rust", "python"):
+            with self.subTest(engine=engine):
+                registry.system("image").engine = engine
+                raw = bytearray(scanlines(4, 2, 4, 0))
+                raw[0] = 9
+                with self.assertRaises(ImageError) as caught:
+                    module.unfilter(bytes(raw), 4, 2, 4)
+                self.assertIn("unknown PNG filter type 9",
+                              str(caught.exception))
+
+    def test_the_backend_is_resolved_once_per_operation(self):
+        """Two answers to one question is how a decode could split in half."""
+        from trjoludus import image as module
+        from trjoludus.native import registry
+
+        registry.system("image").engine = "auto"
+        calls = []
+        real = module._backend
+
+        def counting():
+            calls.append(1)
+            return real()
+
+        module._backend = counting
+        self.addCleanup(setattr, module, "_backend", real)
+
+        module.unfilter(scanlines(4, 2, 4, 0), 4, 2, 4)
+        self.assertEqual(len(calls), 1, "unfilter resolved more than once")
+
+        calls.clear()
+        module.opacity_of(bytes([1, 2, 3, 255]))
+        self.assertEqual(len(calls), 1, "opacity_of resolved more than once")
+
+
 class TestTheNativeSideRefusesSafely(ImageEquivalence):
     """The ABI's own failure paths, from Python."""
 
