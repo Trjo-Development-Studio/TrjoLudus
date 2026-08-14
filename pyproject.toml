@@ -36,11 +36,8 @@ version = { attr = "trjoludus.__version__" }
 [tool.setuptools.packages.find]
 include = ["trjoludus*"]
 
-# A built native library is deliberately NOT packaged here. The wheel this
-# builds is tagged py3-none-any -- pure Python, any platform -- and a wheel
-# saying that must not contain an x86-64 Linux shared object. Shipping native
-# code means platform-tagged wheels built per target, which is work for the
-# milestone that first has native code worth shipping.
-#
-# Until then a native library is a local build artefact: see rust/README.md.
-# TrjoLudus installs and runs without one, with every subsystem on Python.
+# The native library is deliberately NOT listed as package data. It is not a
+# file that sits in the source tree waiting to be copied: it is compiled from
+# rust/ during the build and written straight into the build directory by
+# setup.py, so that a developer's leftover build can never end up in a
+# release. See setup.py, and rust/README.md for building it by hand.

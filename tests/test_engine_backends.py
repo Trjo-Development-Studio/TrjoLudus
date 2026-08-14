@@ -14,6 +14,7 @@ subsystem, just something that answers the two discovery functions -- so that
 "auto prefers Rust" can be checked at all.
 """
 
+import pathlib
 import unittest
 
 from trjoludus import (
@@ -43,6 +44,11 @@ MODULES = {
     "physics": physics, "ai": ai, "pathfinding": pathfinding,
     "animation": animation, "audio": audio,
 }
+
+#: Where the package is, and where the repository is if this is a checkout.
+PACKAGE_ROOT = pathlib.Path(
+    __import__("trjoludus").__file__).parent
+REPOSITORY = PACKAGE_ROOT.parent
 
 
 class PretendLibrary:
@@ -530,38 +536,118 @@ class TestTheWildcardImport(BackendTestCase):
 
 
 class TestTheLibraryLoader(BackendTestCase):
-    """The real loader, against whatever this checkout actually has.
+    """The real loader, pointed at directories these tests control.
 
-    A contributor who has run ``cargo build`` has a library; one who has not
-    does not, and both must pass. So these assert that the loader is
-    *consistent* with what is on disk rather than assuming either state --
-    which is also the only way to notice a library that half-loads.
+    Not at whatever the developer happens to have built.
+    ``TRJOLUDUS_NATIVE_DIR`` is what makes "there is a library" and "there is
+    not" both reachable on purpose, so the suite gives the same answer before
+    and after someone runs cargo.
     """
 
-    def test_the_loader_agrees_with_what_is_on_disk(self):
-        library.forget()
-        built = [name for name in library.LIBRARY_NAMES
-                 if (library.search_directory() / name).is_file()]
+    def look_in(self, folder):
+        """Point the loader at a directory for the rest of this test."""
+        import os
 
-        if built:
-            self.assertTrue(library.loaded(),
-                            f"{built} is on disk but did not load: "
-                            f"{library.problem()}")
-            self.assertEqual(library.version(), library.ABI_VERSION)
-            self.assertIsNone(library.problem())
-            self.assertEqual(library.library_path().parent,
-                             library.search_directory())
-        else:
-            self.assertFalse(library.loaded())
-            self.assertIsNone(library.version())
-            self.assertIsNone(library.library_path())
-            self.assertIn("no native library found", library.problem())
-
-    def test_a_built_library_implements_nothing_yet(self):
-        """Milestone 3.0.1 builds the crate; it still implements nothing."""
+        previous = os.environ.get(library.DIRECTORY_VARIABLE)
+        os.environ[library.DIRECTORY_VARIABLE] = str(folder)
         library.forget()
-        if not library.loaded():
-            self.skipTest("no native library built in this checkout")
+
+        def restore():
+            if previous is None:
+                os.environ.pop(library.DIRECTORY_VARIABLE, None)
+            else:
+                os.environ[library.DIRECTORY_VARIABLE] = previous
+            library.forget()
+
+        self.addCleanup(restore)
+
+    def empty_directory(self):
+        import tempfile
+
+        folder = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, folder, True)
+        return pathlib.Path(folder)
+
+    def a_real_library(self):
+        """A compiled library to test against, from wherever one exists."""
+        for folder in (PACKAGE_ROOT / "native" / "lib",
+                       REPOSITORY / "rust" / "target" / "release",
+                       REPOSITORY / "rust" / "target" / "debug"):
+            for name in library.LIBRARY_NAMES:
+                candidate = folder / name
+                if candidate.is_file():
+                    return candidate
+        return None
+
+    # --- with nothing there ----------------------------------------------
+
+    def test_an_empty_directory_means_no_library(self):
+        self.look_in(self.empty_directory())
+        self.assertFalse(library.loaded())
+        self.assertIsNone(library.version())
+        self.assertIsNone(library.library_path())
+        self.assertIn("no native library found", library.problem())
+
+    def test_nothing_is_available_then(self):
+        self.look_in(self.empty_directory())
+        for name in MODULES:
+            with self.subTest(system=name):
+                self.assertFalse(registry.system(name).available())
+
+    def test_auto_falls_back_and_explicit_rust_does_not(self):
+        self.look_in(self.empty_directory())
+        self.assertEqual(registry.system("rendering").resolve(), PYTHON)
+        rendering.engine = RUST
+        with self.assertRaises(EngineError):
+            registry.system("rendering").resolve()
+
+    def test_a_directory_that_does_not_exist_is_harmless(self):
+        self.look_in(self.empty_directory() / "nowhere")
+        self.assertFalse(library.loaded())
+        self.assertIn("no native library found", library.problem())
+
+    # --- with something broken there --------------------------------------
+
+    def test_a_file_that_is_not_a_library_is_refused(self):
+        folder = self.empty_directory()
+        (folder / library.LIBRARY_NAMES[0]).write_bytes(b"not a shared object")
+        self.look_in(folder)
+        self.assertFalse(library.loaded())
+        self.assertIn("could not be loaded", library.problem())
+
+    def test_an_empty_file_is_refused(self):
+        folder = self.empty_directory()
+        (folder / library.LIBRARY_NAMES[0]).write_bytes(b"")
+        self.look_in(folder)
+        self.assertFalse(library.loaded())
+        self.assertIsNotNone(library.problem())
+
+    def test_a_broken_library_does_not_pretend_rust_is_there(self):
+        folder = self.empty_directory()
+        (folder / library.LIBRARY_NAMES[0]).write_bytes(b"rubbish")
+        self.look_in(folder)
+        self.assertFalse(library.implements("rendering"))
+        rendering.engine = RUST
+        with self.assertRaises(EngineError):
+            registry.system("rendering").resolve()
+
+    # --- with a real one there --------------------------------------------
+
+    def test_a_real_library_loads(self):
+        found = self.a_real_library()
+        if found is None:
+            self.skipTest("no compiled library anywhere; run cargo build")
+        self.look_in(found.parent)
+        self.assertTrue(library.loaded(), library.problem())
+        self.assertEqual(library.version(), library.ABI_VERSION)
+        self.assertIsNone(library.problem())
+        self.assertEqual(library.library_path(), found)
+
+    def test_a_real_library_implements_nothing_yet(self):
+        found = self.a_real_library()
+        if found is None:
+            self.skipTest("no compiled library anywhere; run cargo build")
+        self.look_in(found.parent)
         for name in MODULES:
             with self.subTest(system=name):
                 self.assertFalse(
@@ -570,24 +656,45 @@ class TestTheLibraryLoader(BackendTestCase):
                     f"subsystem has been migrated",
                 )
 
-    def test_auto_still_chooses_python_with_the_real_library(self):
-        library.forget()
-        if not library.loaded():
-            self.skipTest("no native library built in this checkout")
+    def test_a_real_library_still_leaves_auto_on_python(self):
+        found = self.a_real_library()
+        if found is None:
+            self.skipTest("no compiled library anywhere; run cargo build")
+        self.look_in(found.parent)
         self.assertEqual(registry.system("rendering").resolve(), PYTHON)
 
-    def test_explicit_rust_still_fails_with_the_real_library(self):
-        library.forget()
-        if not library.loaded():
-            self.skipTest("no native library built in this checkout")
+    def test_explicit_rust_says_the_library_is_there_but_empty(self):
+        found = self.a_real_library()
+        if found is None:
+            self.skipTest("no compiled library anywhere; run cargo build")
+        self.look_in(found.parent)
         rendering.engine = RUST
         with self.assertRaises(EngineError) as caught:
             registry.system("rendering").resolve()
-        self.assertIn("does not implement it yet", str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("does not implement it yet", message)
+        self.assertNotIn("not built", message)
 
-    def test_it_looks_beside_the_package(self):
-        self.assertEqual(library.search_directory().name, "lib")
-        self.assertEqual(library.search_directory().parent.name, "native")
+    # --- where it looks ----------------------------------------------------
+
+    def test_it_looks_inside_the_package(self):
+        import os
+
+        os.environ.pop(library.DIRECTORY_VARIABLE, None)
+        self.assertEqual(library.search_directory(),
+                         PACKAGE_ROOT / "native" / "lib")
+
+    def test_that_place_does_not_depend_on_the_working_directory(self):
+        import os
+        import tempfile
+
+        os.environ.pop(library.DIRECTORY_VARIABLE, None)
+        here = os.getcwd()
+        self.addCleanup(os.chdir, here)
+        with tempfile.TemporaryDirectory() as elsewhere:
+            os.chdir(elsewhere)
+            self.assertEqual(library.search_directory(),
+                             PACKAGE_ROOT / "native" / "lib")
 
     def test_it_looks_for_every_platform_name(self):
         self.assertEqual(
@@ -595,31 +702,6 @@ class TestTheLibraryLoader(BackendTestCase):
             {"libtrjoludus_native.so", "trjoludus_native.dll",
              "libtrjoludus_native.dylib"},
         )
-
-    def test_implements_is_false_with_no_library(self):
-        self.pretend_nothing()
-        for name in MODULES:
-            with self.subTest(system=name):
-                self.assertFalse(library.implements(name))
-
-    def test_a_file_that_is_not_a_library_is_refused(self):
-        """Now testable for real: something that is not a shared object."""
-        import tempfile
-
-        folder = library.search_directory()
-        already = [name for name in library.LIBRARY_NAMES
-                   if (folder / name).is_file()]
-        if already:
-            self.skipTest("a real library is built here")
-
-        folder.mkdir(parents=True, exist_ok=True)
-        broken = folder / library.LIBRARY_NAMES[0]
-        broken.write_bytes(b"this is not a shared object")
-        self.addCleanup(broken.unlink)
-
-        library.forget()
-        self.assertFalse(library.loaded())
-        self.assertIn("could not be loaded", library.problem())
 
     def test_the_signatures_are_declared_with_both_types(self):
         """The rule that keeps 64-bit handles from being truncated."""
@@ -629,22 +711,24 @@ class TestTheLibraryLoader(BackendTestCase):
                 self.assertIsInstance(argtypes, list)
 
     def test_the_abi_version_matches_the_rust_side(self):
-        import pathlib
         import re
 
-        source = (pathlib.Path(__file__).parent.parent / "rust"
-                  / "trjoludus-native" / "src" / "lib.rs").read_text()
-        found = re.search(r"ABI_VERSION: u32 = (\d+)", source)
+        source = (REPOSITORY / "rust" / "trjoludus-native" / "src"
+                  / "lib.rs")
+        if not source.is_file():
+            self.skipTest("no Rust source here (installed package)")
+        found = re.search(r"ABI_VERSION: u32 = (\d+)", source.read_text())
         self.assertIsNotNone(found, "the Rust crate declares no ABI version")
         self.assertEqual(int(found.group(1)), library.ABI_VERSION)
 
     def test_the_rust_crate_implements_nothing_yet(self):
-        """Milestone 3.0 is architecture; nothing has been migrated."""
-        import pathlib
-
-        source = (pathlib.Path(__file__).parent.parent / "rust"
-                  / "trjoludus-native" / "src" / "lib.rs").read_text()
-        self.assertIn("pub const IMPLEMENTED: &[&str] = &[];", source)
+        """Milestone 3.0.2 packages the crate; it still implements nothing."""
+        source = (REPOSITORY / "rust" / "trjoludus-native" / "src"
+                  / "lib.rs")
+        if not source.is_file():
+            self.skipTest("no Rust source here (installed package)")
+        self.assertIn("pub const IMPLEMENTED: &[&str] = &[];",
+                      source.read_text())
 
 
 class TestThePublicApiIsUnchanged(BackendTestCase):

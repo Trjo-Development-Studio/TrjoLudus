@@ -586,6 +586,13 @@ Ordered by severity.
 | 2026-08-21 | The rendering system and its Python implementation are named apart | `rendering.py` holds `rendering.engine`; `rendering_python.py` holds the `Framebuffer` that implements it today. `render.py` beside `rendering.py` was one letter from the wrong import, and the new name says which of the three `.engine` values it *is* |
 | 2026-08-21 | A `py3-none-any` wheel carries no native library | Packaging a locally built `.so` into a wheel tagged "pure Python, any platform" was wrong: it would install on Windows and macOS and be unloadable there. Shipping native code needs platform-tagged wheels, which belongs to the milestone that first has native code worth shipping |
 | 2026-08-21 | The Python suite passes with a native library and without one | A contributor who has never run `cargo` must be able to run the tests, and one who has must not get a different answer. The loader tests assert consistency with what is on disk rather than assuming either state, and skip the parts that need the other |
+| 2026-08-22 | A wheel's name and its contents must agree | `py3-none-any` carrying an x86-64 shared object is a wheel that installs on a Mac and fails there. A build that compiles native code produces `py3-none-linux_x86_64`; one that does not produces `py3-none-any`. The tag is derived from what the build actually did, not chosen |
+| 2026-08-22 | Native wheels are `py3-none`, not `cp3xx` | The library is C, loaded through `ctypes`, so it does not care which Python is running -- only which machine. Tagging it `cp314` would refuse to install on 3.13 for no reason at all |
+| 2026-08-22 | The library is compiled during the build, never copied from the tree | `setup.py` empties the build's `native/lib/` and puts a freshly compiled file there. A developer's build from last week must not be able to end up in a release, and the only way to be sure is never to look at it |
+| 2026-08-22 | A build with no Rust toolchain is a pure-Python wheel, not a failure | TrjoLudus is a Python engine that can use a native library. Refusing to build without Rust would make the native part mandatory, which it is not. `TRJOLUDUS_BUILD_NATIVE=1` is there for when you want to be sure |
+| 2026-08-22 | The loader finds its library relative to itself | `Path(__file__).parent / "lib"` is the same place in a checkout and in a package installed anywhere at all. Nothing depends on the working directory, on `rust/target/`, or on where the source once was |
+| 2026-08-22 | `TRJOLUDUS_NATIVE_DIR` exists for tests and development | The loader tests point at directories they create, so "there is a library" and "there is none" are both reachable on purpose. A suite whose result depends on whether the developer ran cargo this morning is not a suite |
+| 2026-08-22 | Only Linux x86-64 is claimed | It is the only platform where the library has been built, packaged, installed and loaded. Windows, macOS and ARM are not claimed because they have not been done -- and the tag is `linux_x86_64` rather than `manylinux` because a manylinux promise about C library ranges has not been tested |
 | 2026-08-12 | The scene is cleared when a run finishes | The objects belonged to that run. Leaving them would make a second `run()` inherit the first game's scene and collide on every name; anything created before a run still takes part in it |
 | 2026-08-12 | One conformance suite runs the same contract assertions against every backend | A platform abstraction is only real if the layers above cannot tell which backend is underneath. Backends that cannot run on the current machine are skipped, never mocked -- a fake window server would agree with a wrong implementation |
 | 2026-08-12 | Tutorial code may use the public API only | No `trjoludus.platform`, no `ctypes`, no private internals. A lesson that cannot be written without reaching past the public API is evidence the public API is unfinished, and the fix belongs in the engine. `examples/window_test.py` currently breaks this rule out of necessity and is therefore classified as an engine smoke test, to be replaced by a real first lesson once backend selection exists |
@@ -739,6 +746,23 @@ Three rules hold at the boundary:
 2. **Nothing calls back into Python.** Data in, results out.
 3. **Ownership is explicit.** A buffer is borrowed for one call, or owned
    natively and freed by an explicit call.
+
+### Packaging
+
+The native library is compiled from `rust/` during the build and written into
+the package. Which wheel comes out depends on what the build could do:
+
+| Build | Wheel | Contains |
+| --- | --- | --- |
+| Rust toolchain present | `py3-none-<platform>` | the native library |
+| No toolchain, or `TRJOLUDUS_BUILD_NATIVE=0` | `py3-none-any` | pure Python |
+
+Both are complete engines. The second one runs every subsystem in Python,
+which is what the first one does too until a subsystem is migrated.
+
+The loader looks in `trjoludus/native/lib/`, found relative to the loader's own
+file -- the same place whether TrjoLudus is a checkout or an installed package
+somewhere unrelated to it.
 
 ### Rules
 

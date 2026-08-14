@@ -25,6 +25,7 @@ calls back into Python.
 """
 
 import ctypes
+import os
 from pathlib import Path
 
 __all__ = ["ABI_VERSION", "implements", "library_path", "loaded", "version"]
@@ -78,12 +79,27 @@ _path: "Path | None" = None
 _problem: "str | None" = None
 
 
+#: Environment variable naming somewhere else to look. For development and
+#: for tests, which need to try both a library and no library without
+#: depending on whatever the developer happens to have built.
+DIRECTORY_VARIABLE = "TRJOLUDUS_NATIVE_DIR"
+
+
 def search_directory() -> Path:
     """Where a built library is expected to sit.
 
-    Beside this module, so that a wheel carrying a compiled library and a
-    checkout that has just built one both work without configuration.
+    Beside this module -- ``trjoludus/native/lib/`` -- which is the same place
+    whether TrjoLudus is a checkout or an installed package, because it is
+    found relative to this file rather than to the working directory or to
+    anywhere the source once was. An installed wheel carries its library
+    there; a checkout gets one there by building it.
+
+    ``TRJOLUDUS_NATIVE_DIR`` overrides it, which is how a test can arrange
+    for there to be a library, or for there to be none, on purpose.
     """
+    override = os.environ.get(DIRECTORY_VARIABLE)
+    if override:
+        return Path(override)
     return Path(__file__).parent / "lib"
 
 

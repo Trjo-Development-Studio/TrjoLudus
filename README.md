@@ -95,7 +95,8 @@ tests/                 stdlib unittest suite
 ## Requirements
 
 **To make games with TrjoLudus:** Python 3.11 or newer. Nothing else. There is
-no Rust to install, and nothing to compile.
+no Rust to install and nothing to compile -- a released wheel already contains
+whatever native code it needs.
 
 **To work on TrjoLudus itself:** Python 3.11+, and the Rust toolchain if you
 are touching the native side. See [Development](#development).
@@ -653,6 +654,30 @@ rustc --version
 cargo --version
 ```
 
+### Building a package
+
+```sh
+python -m pip wheel . --no-deps -w dist
+```
+
+With a Rust toolchain present this compiles the native library and produces a
+platform wheel:
+
+```text
+trjoludus-0.0.1-py3-none-linux_x86_64.whl     contains the native library
+```
+
+Without one it produces a pure-Python wheel, which is a complete engine:
+
+```text
+trjoludus-0.0.1-py3-none-any.whl              no native library
+```
+
+`TRJOLUDUS_BUILD_NATIVE` decides when you want to be sure: `1` requires the
+toolchain and fails the build without it, `0` skips it. The library is always
+compiled from `rust/` during the build -- a leftover build in
+`trjoludus/native/lib/` is never packaged.
+
 ### Tests
 
 ```sh
@@ -679,11 +704,21 @@ cargo build
 cargo test
 ```
 
-The Python suite passes whether or not a native library has been built. Three
-tests skip when there is none, and a different three skip when there is one --
-both states are supported, because a contributor who has never run `cargo` must
-be able to run the suite. See [`rust/README.md`](rust/README.md) for how to
-build the library and where to put it.
+The packaging tests build real wheels and look inside them, which takes about
+half a minute, so they are asked for rather than run by default:
+
+```sh
+TRJOLUDUS_PACKAGING_TESTS=1 python -m unittest tests.test_packaging
+```
+
+The Python suite passes whether or not a native library has been built: the
+loader tests point at directories they create, rather than at whatever happens
+to be in your working tree. A handful skip when there is no compiled library
+anywhere to load, which is the one thing that genuinely cannot be faked.
+
+To give a checkout a native library, build it and copy it in --
+`TRJOLUDUS_NATIVE_DIR` points the loader somewhere else if you would rather not.
+See [`rust/README.md`](rust/README.md).
 
 ## Advanced: choosing a backend
 
@@ -727,7 +762,31 @@ nothing is moved to Rust to fill in a table.
 **Nothing is faked.** No native implementation exists yet, so `"auto"` uses
 Python everywhere today and `rendering.engine = "rust"` raises an error saying
 so. That is the point: an explicit choice that cannot be honoured is reported,
-not quietly swapped for the other one.
+not quietly swapped for the other one. The error distinguishes the two reasons
+it might fail:
+
+```text
+The native library is loaded but does not implement it yet.
+The native library is not built or could not be loaded; see rust/README.md.
+```
+
+### Native platforms
+
+| Platform | Native library | How it was verified |
+| --- | --- | --- |
+| Linux x86-64 | **supported** | built, packaged, installed and loaded here |
+| Windows | not verified | never built or run |
+| macOS | not verified | never built or run |
+| Linux ARM | not verified | never built or run |
+
+TrjoLudus installs and runs everywhere Python does. The table is about the
+*native* library only: where it is not supported, every subsystem runs its
+Python implementation, which is what happens on every platform today anyway.
+
+The Linux x86-64 wheel is tagged `py3-none-linux_x86_64`. That tag is truthful
+but deliberately not `manylinux`: a manylinux wheel promises compatibility with
+a defined range of C libraries, and that promise has not been tested, so it has
+not been made. The wheel installs directly; it is not yet a PyPI upload.
 
 **Set it before `run()`.** Changing a subsystem's engine while a game is
 running is refused, because half of it would already have started on the old

@@ -55,12 +55,25 @@ library.library_path()  # .../trjoludus/native/lib/libtrjoludus_native.so
 library.problem()       # None, or why there is no library
 ```
 
-The library is **not** shipped in the wheel. That wheel is tagged
-`py3-none-any` -- pure Python, any platform -- and a wheel claiming that must
-not contain an x86-64 Linux shared object. Shipping native code means
-platform-tagged wheels built per target, which is work for the milestone that
-first has native code worth shipping. Until then a built library is a local
-artefact, and `trjoludus/native/lib/` is gitignored.
+## How it gets into a package
+
+You do not have to do the copy above by hand for a release: building a package
+does it. `setup.py` runs `cargo build --release`, puts the result in the
+package, and tags the wheel for this machine:
+
+```sh
+python -m pip wheel . --no-deps -w dist
+# trjoludus-0.0.1-py3-none-linux_x86_64.whl
+```
+
+With no toolchain it builds a pure-Python wheel instead, which is a complete
+engine. `TRJOLUDUS_BUILD_NATIVE=1` requires the toolchain and fails without it;
+`=0` skips it.
+
+The build never copies whatever is sitting in `trjoludus/native/lib/`. It
+empties that directory in the build tree and puts a freshly compiled file
+there, so a build from last week cannot end up in a release. Which is also why
+that directory is gitignored: a library there is yours, not the project's.
 
 ## What is in it
 
