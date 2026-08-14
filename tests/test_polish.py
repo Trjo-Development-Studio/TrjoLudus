@@ -247,15 +247,21 @@ class TestDrawingPosition(PositionTestCase):
         box.set.y(0)
         self.assertEqual(box.position, (-50, 0))
 
-    def test_position_must_be_whole_pixels(self):
+    def test_a_position_must_be_a_number(self):
         box = self.box()
-        for bad in (1.5, "200", True, None):
+        for bad in ("200", True, None):
             with self.subTest(bad=bad):
                 with self.assertRaises(TypeError):
                     box.set.x(bad)
                 with self.assertRaises(TypeError):
                     box.set.y(bad)
         self.assertEqual(box.position, (10, 10))
+
+    def test_a_position_may_be_fractional(self):
+        box = self.box()
+        box.set.x(1.5)
+        box.set.y(2.25)
+        self.assertEqual(box.position, (1.5, 2.25))
 
     def test_setting_a_lines_position_moves_the_whole_line(self):
         line = draw.list("menu").line(0, 0, 10, 4, color.blue)
@@ -324,11 +330,15 @@ class TestGameObjectPosition(PositionTestCase):
         self.subject.set.x(42)
         self.assertEqual(self.subject.position, by_assignment)
 
-    def test_position_must_be_whole_pixels(self):
-        for bad in (1.5, "200", True):
+    def test_a_position_must_be_a_number(self):
+        for bad in ("200", True, None):
             with self.subTest(bad=bad):
                 with self.assertRaises(TypeError):
                     self.subject.set.x(bad)
+
+    def test_a_position_may_be_fractional(self):
+        self.subject.set.x(1.5)
+        self.assertEqual(self.subject.x, 1.5)
 
     def test_a_removed_object_refuses_to_be_placed(self):
         self.subject.destroy()

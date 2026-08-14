@@ -324,10 +324,15 @@ class TestMoving(DrawingTestCase):
         self.assertEqual((line.x, line.y), (3, 2))
         self.assertEqual((line.end_x, line.end_y), (13, 6))
 
-    def test_movement_must_be_whole_pixels(self):
+    def test_movement_may_be_fractional(self):
+        box = draw.list("hud").rect(0, 0, 4, 4, color.blue)
+        box.move.x(1.5)
+        self.assertEqual(box.position, (1.5, 0))
+
+    def test_movement_must_still_be_a_number(self):
         box = draw.list("hud").rect(0, 0, 4, 4, color.blue)
         with self.assertRaises(TypeError):
-            box.move.x(1.5)
+            box.move.x("1")
         self.assertEqual(box.position, (0, 0))
 
     def test_position_cannot_be_added_to_or_removed_from(self):

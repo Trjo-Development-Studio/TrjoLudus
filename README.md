@@ -230,6 +230,10 @@ change it **relative** to where it is now, so calls add up. There is no
 `move`. Setting a line's position moves the whole line, so it keeps the shape
 it was drawn with.
 
+Positions may be fractional here too. `drawing.x` is the exact value and
+`drawing.screen_position` is the pixel it lands on -- the same rounding the
+hitbox uses, so the two cannot disagree.
+
 Changes show up in what the mouse finds as well as in what is drawn: there is
 one copy of a drawing's position and size, and drawing and hit-testing both
 read it. A button that has moved, grown or changed its words is hovered and
@@ -333,22 +337,19 @@ print(time.fps)
 a machine drawing twice as many frames. Scaling by `time.delta` -- how long the
 last frame took -- moves the same distance per second on both.
 
-Positions are whole pixels, and a fraction of a pixel per frame is not, so keep
-the exact position yourself and place the object from it:
-
 ```python
-def on_start(self):
-    self.player_x = 0.0
-
 def on_update(self, dt):
-    self.player_x += 100 * time.delta      # 100 pixels every second
-    self.player.set.x(round(self.player_x))
+    self.player.move.x(100 * time.delta)   # 100 pixels every second
 ```
 
-Round the **total**, not each step. `move.x(round(100 * time.delta))` looks
-simpler but drifts badly: at 60 fps each step is 1.67 pixels, every one of them
-rounds up to 2, and after a second the object is 20% further along than it
-should be. Rounding an absolute position cannot accumulate an error.
+That is all there is to it. **Positions carry fractions.** At 60 frames a
+second each of those steps is 1.67 pixels, and the object keeps the fraction
+rather than losing it or rounding it up, so a second later it has gone exactly
+100 pixels. Only the renderer rounds, when it turns a position into a pixel.
+
+`player.x` is the exact value -- `100.5` comes back as `100.5`. There is no
+separate "precise position" to reach for; this is the position, and what gets
+drawn is it, rounded. Whole numbers behave exactly as they always did.
 
 `time.delta` is the same number `on_update(dt)` is handed. It exists so that
 code which is not in `on_update` -- a helper, a method of your own -- can reach
@@ -424,6 +425,10 @@ player.set.scale = 1.25
 it **relative** to wherever the object is now, so calls add up: two
 `move.x(50)` calls move it 100 pixels in total. Negative values move left and
 up. Nothing is clamped -- an object may be moved off screen.
+
+Both take fractions. A position is a number, not a pixel: `set.x(100.5)` is a
+real place to be, and it is kept exactly. Rounding happens once, in the
+renderer, so what is drawn and what can be clicked always agree.
 
 This is the same spelling drawings use, so one way of saying "put this here"
 works on everything with a position. Assigning `player.x = 250` does the same

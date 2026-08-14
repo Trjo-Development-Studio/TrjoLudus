@@ -241,13 +241,17 @@ class TestAbsoluteAndRelative(ObjectTestCase):
         self.assertEqual(self.player.x, by_call)
 
     def test_assignment_is_checked_the_same_way(self):
-        for bad in (1.5, "100", True, None):
+        for bad in ("100", True, None):
             with self.subTest(bad=bad):
                 with self.assertRaises(TypeError):
                     self.player.set.x = bad
                 with self.assertRaises(TypeError):
                     self.player.set.x(bad)
         self.assertEqual(self.player.x, 10)
+
+    def test_assignment_takes_a_fraction_too(self):
+        self.player.set.x = 100.5
+        self.assertEqual(self.player.x, 100.5)
 
     def test_there_is_no_relative_position_outside_move(self):
         for namespace in (self.player.add, self.player.remove):

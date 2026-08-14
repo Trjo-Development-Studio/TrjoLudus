@@ -388,13 +388,24 @@ class TestInvalidValues(UiTestCase):
         with self.assertRaises(ValueError):
             draw.list("")
 
-    def test_coordinates_must_be_whole_numbers(self):
+    def test_coordinates_may_be_fractional(self):
+        """Positions carry fractions; only drawing rounds them."""
+        self.assertEqual(draw.rect(1.5, 0, 5, 5, color.blue).x, 1.5)
+        self.assertEqual(draw.line(0, 0, 1.5, 5, color.blue).end_x, 1.5)
+        self.assertEqual(draw.text(0.5, 0, "hi", color.blue).x, 0.5)
+
+    def test_coordinates_must_still_be_numbers(self):
         with self.assertRaises(TypeError):
-            draw.rect(1.5, 0, 5, 5, color.blue)
+            draw.rect("1", 0, 5, 5, color.blue)
         with self.assertRaises(TypeError):
-            draw.line(0, 0, 1.5, 5, color.blue)
+            draw.line(0, 0, True, 5, color.blue)
         with self.assertRaises(TypeError):
-            draw.text(0.5, 0, "hi", color.blue)
+            draw.text(None, 0, "hi", color.blue)
+
+    def test_a_size_is_still_a_whole_number_of_pixels(self):
+        """A position can fall between pixels; a width cannot be half of one."""
+        with self.assertRaises(TypeError):
+            draw.rect(0, 0, 5.5, 5, color.blue)
 
     def test_a_rectangle_cannot_have_a_negative_size(self):
         with self.assertRaises(ValueError):

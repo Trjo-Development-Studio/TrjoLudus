@@ -29,6 +29,8 @@ where two things overlap, the one drawn last -- the one you can see -- is the
 one the mouse finds.
 """
 
+from math import isfinite
+
 from trjoludus import color as color_module
 from trjoludus import font
 from trjoludus.errors import TrjoLudusError
@@ -38,6 +40,26 @@ __all__ = ["Drawable", "DrawList", "UiError", "current_ui"]
 
 class UiError(TrjoLudusError):
     """Raised when a drawing list or drawing is missing, duplicated, or gone."""
+
+
+def _number(value, label: str):
+    """Accept a position, whole or fractional.
+
+    Positions may be fractional so that movement measured in seconds adds up
+    exactly instead of losing or gaining a fraction of a pixel every frame.
+    The value is kept as given; :class:`Drawable` rounds once, when it works
+    out where it lands on screen.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"{label} must be a number of pixels, got {type(value).__name__}"
+        )
+    if not isfinite(value):
+        raise ValueError(
+            f"{label} must be a real distance, got {value}. There is no "
+            f"pixel that far away."
+        )
+    return value
 
 
 def _whole_number(value, label: str) -> int:
@@ -96,14 +118,14 @@ class _Setter:
         """Put the drawing's left edge exactly ``pixels`` from the left."""
         drawable = self._drawable
         drawable._live()
-        drawable._shift_x(_whole_number(pixels, "x") - drawable._x)
+        drawable._shift_x(_number(pixels, "x") - drawable._x)
         return drawable
 
     def y(self, pixels: int) -> "Drawable":
         """Put the drawing's top edge exactly ``pixels`` from the top."""
         drawable = self._drawable
         drawable._live()
-        drawable._shift_y(_whole_number(pixels, "y") - drawable._y)
+        drawable._shift_y(_number(pixels, "y") - drawable._y)
         return drawable
 
     def scale(self, amount) -> "Drawable":
@@ -188,14 +210,14 @@ class _DrawingMovement:
         """Move right by ``pixels``, or left if negative."""
         drawable = self._drawable
         drawable._live()
-        drawable._shift_x(_whole_number(pixels, "a movement distance"))
+        drawable._shift_x(_number(pixels, "a movement distance"))
         return drawable
 
     def y(self, pixels: int) -> "Drawable":
         """Move down by ``pixels``, or up if negative."""
         drawable = self._drawable
         drawable._live()
-        drawable._shift_y(_whole_number(pixels, "a movement distance"))
+        drawable._shift_y(_number(pixels, "a movement distance"))
         return drawable
 
     def __repr__(self) -> str:
@@ -454,33 +476,54 @@ class Drawable:
     # --- geometry ---------------------------------------------------------
 
     @property
+    def screen_position(self) -> tuple[int, int]:
+        """The pixel this is drawn at: :attr:`x` and :attr:`y`, rounded once.
+
+        A position may be fractional; a pixel may not. Everything that needs
+        to know where the drawing *landed* -- what is drawn, and what the
+        mouse can hit -- starts here, so there is one rounding rather than
+        two that could disagree.
+        """
+        return (round(self._x), round(self._y))
+
+    @property
     def bounds(self) -> tuple[int, int, int, int]:
-        """``(left, top, right, bottom)`` of the area this occupies.
+        """``(left, top, right, bottom)`` of the area this occupies on screen.
 
         Read from the drawing's current values, so a change of text, size or
         scale moves the hitbox with it. Scaling grows a drawing from its
         top-left corner, which is where its position already is -- so scaling
         never moves the corner a game placed.
+
+        Whole pixels, from :attr:`screen_position`: this is where the drawing
+        is, not where it would be if pixels were infinitely small.
         """
         scale = self._scale
+        x, y = self.screen_position
         if self._kind == "rect":
-            return (self._x, self._y,
-                    self._x + round(self._width * scale),
-                    self._y + round(self._height * scale))
+            return (x, y,
+                    x + round(self._width * scale),
+                    y + round(self._height * scale))
         if self._kind == "text":
             width, height = font.measure(self._message)
-            return (self._x, self._y,
-                    self._x + round(width * scale),
-                    self._y + round(height * scale))
+            return (x, y,
+                    x + round(width * scale),
+                    y + round(height * scale))
         x, y, end_x, end_y = self._scaled_line()
         return (min(x, end_x), min(y, end_y), max(x, end_x) + 1,
                 max(y, end_y) + 1)
 
     def _scaled_line(self) -> tuple[int, int, int, int]:
+        """Both ends of the line, on screen.
+
+        The length is worked out from the exact positions and rounded once,
+        so a line whose ends are half a pixel apart still keeps its length.
+        """
         scale = self._scale
-        return (self._x, self._y,
-                self._x + round((self._end_x - self._x) * scale),
-                self._y + round((self._end_y - self._y) * scale))
+        x, y = self.screen_position
+        return (x, y,
+                x + round((self._end_x - self._x) * scale),
+                y + round((self._end_y - self._y) * scale))
 
     def contains(self, x: int, y: int) -> bool:
         """Whether a point falls inside this drawing's area."""
@@ -490,26 +533,30 @@ class Drawable:
     # --- drawing ----------------------------------------------------------
 
     def render(self, framebuffer) -> None:
-        """Draw this, as it is now."""
+        """Draw this, as it is now.
+
+        Everything here starts from :attr:`screen_position`, which is what
+        :attr:`bounds` uses too -- so the pixels and the hitbox are worked out
+        from one rounded position rather than two.
+        """
         if not self._visible:
             return
         scale = self._scale
+        x, y = self.screen_position
 
         if self._kind == "line":
             framebuffer.draw_line(*self._scaled_line(), self._colour)
             return
 
         if self._kind == "rect":
-            framebuffer.fill_rect(self._x, self._y, round(self._width * scale),
+            framebuffer.fill_rect(x, y, round(self._width * scale),
                                   round(self._height * scale), self._colour)
             return
 
         if scale == 1.0:
-            framebuffer.draw_text(self._message, self._x, self._y,
-                                  self._colour)
+            framebuffer.draw_text(self._message, x, y, self._colour)
             return
-        self._render_scaled_text(framebuffer, self._message, self._x, self._y,
-                                 scale)
+        self._render_scaled_text(framebuffer, self._message, x, y, scale)
 
     def _render_scaled_text(self, framebuffer, text, x, y, scale) -> None:
         """Draw text larger by turning each font pixel into a block.
@@ -592,7 +639,7 @@ class DrawList:
         self._live()
         for label, value in (("x", x), ("y", y),
                              ("end_x", end_x), ("end_y", end_y)):
-            _whole_number(value, label)
+            _number(value, label)
         return self._add(Drawable(
             "line", color_module.check(colour, "a line colour"), self,
             x=x, y=y, end_x=end_x, end_y=end_y,
@@ -602,8 +649,9 @@ class DrawList:
              colour) -> Drawable:
         """Add a filled rectangle with its top-left corner at ``(x, y)``."""
         self._live()
-        for label, value in (("x", x), ("y", y),
-                             ("width", width), ("height", height)):
+        for label, value in (("x", x), ("y", y)):
+            _number(value, label)
+        for label, value in (("width", width), ("height", height)):
             _whole_number(value, label)
         if width < 0 or height < 0:
             raise ValueError(
@@ -619,7 +667,7 @@ class DrawList:
         """Add text with its top-left corner at ``(x, y)``."""
         self._live()
         for label, value in (("x", x), ("y", y)):
-            _whole_number(value, label)
+            _number(value, label)
         if not isinstance(message, str):
             raise TypeError(
                 f"text must be a string, got {type(message).__name__}"

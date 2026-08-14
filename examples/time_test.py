@@ -52,12 +52,6 @@ class TimeTest(Game):
         # while this runs.
         time.wait(0.5)
 
-        # The exact positions. Whole pixels are what gets drawn, but a
-        # fraction of a pixel per frame still has to be remembered somewhere,
-        # or it is lost every frame and the box crawls.
-        self.per_second_x = 0.0
-        self.per_frame_x = 0.0
-
         self.since_readout = 0.0
 
     def on_event(self, event):
@@ -65,19 +59,15 @@ class TimeTest(Game):
             self.quit()
 
     def on_update(self, dt):
-        # 200 pixels a second, whatever the frame rate. The total is what
-        # gets rounded, so no error builds up frame after frame.
-        self.per_second_x += 200 * time.delta
+        # 200 pixels a second, whatever the frame rate. The fraction of a
+        # pixel this is worth in one frame is kept, not lost or rounded up.
+        self.per_second.move.x(200 * time.delta)
         # A fixed step: twice as fast when there are twice as many frames.
-        self.per_frame_x += 3
+        self.per_frame.move.x(3)
 
-        for box, exact in ((self.per_frame, "per_frame_x"),
-                           (self.per_second, "per_second_x")):
-            position = getattr(self, exact)
-            if position > WIDTH:
-                position = -40.0
-                setattr(self, exact, position)
-            box.set.x(round(position))
+        for box in (self.per_frame, self.per_second):
+            if box.x > WIDTH:
+                box.set.x(-40)
 
         # fps jumps about from frame to frame, so only refresh what is shown a
         # few times a second. Reading it more often would be a blur of digits.

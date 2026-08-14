@@ -283,20 +283,29 @@ class TestMovement(SceneTestCase):
         player = self.player()
         self.assertIs(player.move, player.move)
 
-    def test_non_integer_distances_are_rejected(self):
-        """A float position would fail much later, inside the renderer."""
+    def test_things_that_are_not_distances_are_rejected(self):
+        """Fractions are a distance; a string and a bool are not."""
         player = self.player()
-        for bad in (1.5, "10", None, True):
+        for bad in ("10", None, True, [1]):
             with self.subTest(distance=bad):
                 with self.assertRaises(TypeError):
                     player.move.x(bad)
+        for bad in (float("inf"), float("nan")):
+            with self.subTest(distance=bad):
+                with self.assertRaises(ValueError):
+                    player.move.x(bad)
         self.assertEqual(player.x, 100)
 
-    def test_setting_a_non_integer_position_is_rejected(self):
+    def test_a_fractional_distance_is_kept(self):
+        """The fraction a frame is worth must not be lost or rounded up."""
         player = self.player()
-        with self.assertRaises(TypeError):
-            player.x = 1.5
-        self.assertEqual(player.x, 100)
+        player.move.x(1.5)
+        self.assertEqual(player.x, 101.5)
+
+    def test_setting_a_fractional_position_is_kept(self):
+        player = self.player()
+        player.x = 1.5
+        self.assertEqual(player.x, 1.5)
 
     def test_moving_a_removed_object_raises(self):
         """Silently moving something nobody draws looks like a bug in TrjoLudus."""
@@ -480,9 +489,13 @@ class TestCreateImage(SceneTestCase):
         with self.assertRaises(ValueError):
             create.image(0, 0, self.sprite, "")
 
-    def test_non_integer_coordinates_are_rejected(self):
+    def test_coordinates_may_be_fractional(self):
+        create.image(1.5, 0, self.sprite, "player")
+        self.assertEqual(GameObject("player").position, (1.5, 0))
+
+    def test_coordinates_that_are_not_numbers_are_rejected(self):
         with self.assertRaises(TypeError):
-            create.image(1.5, 0, self.sprite, "player")
+            create.image("1", 0, self.sprite, "player")
 
     def test_destroy(self):
         create.image(0, 0, self.sprite, "player").destroy()

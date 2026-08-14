@@ -11,6 +11,14 @@ pixels and asked to show them.
 
 Pixels are BGRA, matching :mod:`trjoludus.image`; see that module for why.
 
+**Coordinates may be fractional; pixels may not.** Rounding happens here and
+nowhere else. A game object at x = 100.75 is a real position -- it is what
+makes movement measured in seconds add up exactly -- but there is no pixel
+between 100 and 101, so every drawing method rounds what it is given as it
+turns a position into an index. Anything that needs to know where something
+*landed* rounds the same way, so what is drawn and what can be clicked cannot
+disagree.
+
 **This module is the engine's rendering boundary.** Everything above it deals
 in objects, drawings and positions; everything below it deals in bytes. That
 makes it the one piece a faster implementation would replace -- in Rust, in C,
@@ -95,8 +103,9 @@ class Framebuffer:
         pattern = bytes((blue, green, red, 255))
         self._pixels[:] = pattern * (self._width * self._height)
 
-    def set_pixel(self, x: int, y: int, colour) -> None:
+    def set_pixel(self, x, y, colour) -> None:
         """Set one pixel, ignoring anything outside the buffer."""
+        x, y = round(x), round(y)
         if not (0 <= x < self._width and 0 <= y < self._height):
             return
         red, green, blue = colour
@@ -106,13 +115,14 @@ class Framebuffer:
         self._pixels[index + 2] = red
         self._pixels[index + 3] = 255
 
-    def fill_rect(self, x: int, y: int, width: int, height: int, colour) -> None:
+    def fill_rect(self, x, y, width: int, height: int, colour) -> None:
         """Fill a rectangle, clipped to the buffer.
 
         A rectangle with no area draws nothing rather than being an error: a
         UI built from computed sizes will occasionally produce one, and it is
         not a mistake worth stopping for.
         """
+        x, y = round(x), round(y)
         left = max(0, x)
         top = max(0, y)
         right = min(self._width, x + width)
@@ -127,7 +137,7 @@ class Framebuffer:
             start = (line * self._width + left) * BYTES_PER_PIXEL
             self._pixels[start:start + span] = row
 
-    def draw_line(self, x: int, y: int, end_x: int, end_y: int, colour) -> None:
+    def draw_line(self, x, y, end_x, end_y, colour) -> None:
         """Draw a one-pixel line between two points, ends included.
 
         Bresenham's algorithm: it steps in whole pixels, so a line never has
@@ -138,6 +148,8 @@ class Framebuffer:
         way and lights slightly different pixels -- and a line that changes
         depending on which end you name would be a surprise.
         """
+        x, y = round(x), round(y)
+        end_x, end_y = round(end_x), round(end_y)
         if (x, y) > (end_x, end_y):
             x, y, end_x, end_y = end_x, end_y, x, y
 
@@ -159,12 +171,13 @@ class Framebuffer:
                 error += dx
                 y += step_y
 
-    def draw_text(self, text: str, x: int, y: int, colour) -> None:
+    def draw_text(self, text: str, x, y, colour) -> None:
         """Draw one line of text with the built-in font.
 
         ``(x, y)`` is the top-left corner of the first character. Newlines are
         not handled here: a game draws each line where it wants it.
         """
+        x, y = round(x), round(y)
         pen = x
         for character in text:
             for column, bits in enumerate(font.columns_for(character)):
@@ -175,7 +188,7 @@ class Framebuffer:
                         self.set_pixel(pen + column, y + row, colour)
             pen += font.CHARACTER_WIDTH + font.SPACING
 
-    def draw_image(self, image, x: int, y: int, scale: float = 1.0) -> None:
+    def draw_image(self, image, x, y, scale: float = 1.0) -> None:
         """Composite an image with its top-left corner at ``(x, y)``.
 
         Anything falling outside the buffer is clipped, so an object may be
@@ -186,6 +199,7 @@ class Framebuffer:
         the unscaled path below, byte for byte -- scaling is an extra route,
         not a tax on every frame that does not use it.
         """
+        x, y = round(x), round(y)
         if scale != 1.0:
             self._draw_image_scaled(image, x, y, scale)
             return

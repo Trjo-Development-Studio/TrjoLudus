@@ -413,35 +413,36 @@ class TestDelta(TimeTestCase):
 class TestMovingByTime(TimeTestCase):
     """Whole-pixel positions and fractional speeds have to be reconciled."""
 
-    def test_a_fractional_step_is_not_a_whole_number_of_pixels(self):
-        """Which is why a game keeps the exact position itself."""
+    def test_a_fractional_step_is_kept(self):
+        """The whole point: a frame's worth of movement is not a whole pixel."""
         from trjoludus import color, draw
 
         box = draw.list("menu").rect(0, 0, 10, 10, color.blue)
-        with self.assertRaises(TypeError):
-            box.move.x(1.67)
+        box.move.x(1.67)
+        self.assertEqual(box.x, 1.67)
 
-    def test_rounding_each_step_drifts(self):
-        """The mistake the documentation warns about, measured.
+    def test_rounding_each_step_would_have_drifted(self):
+        """What the old whole-pixel API forced, measured.
 
         At 60 frames a second a 100-pixel-per-second step is 1.67 pixels, and
-        every one of them rounds to 2. This is not engine behaviour to keep --
-        it is why the engine tells games to round the total instead.
+        every one of them rounds to 2 -- 20% too far after a second. This is
+        the arithmetic sub-pixel positions exist to avoid.
         """
         step = 100 * (1 / 60)
-        frames = 60
-        drifted = frames * round(step)
+        drifted = 60 * round(step)
         self.assertEqual(drifted, 120)
         self.assertGreater(drifted, 100 * 1.15)
 
-    def test_rounding_the_total_does_not_drift(self):
-        step = 100 * (1 / 60)
-        exact = 0.0
-        for _ in range(60):
-            exact += step
-        self.assertEqual(round(exact), 100)
+    def test_moving_by_a_fraction_each_frame_does_not_drift(self):
+        from trjoludus import color, draw
 
-    def test_the_documented_pattern_lands_where_it_should(self):
+        box = draw.list("menu").rect(0, 0, 10, 10, color.blue)
+        for _ in range(60):
+            box.move.x(100 * (1 / 60))
+        self.assertAlmostEqual(box.x, 100.0, places=6)
+        self.assertEqual(box.screen_position[0], 100)
+
+    def test_the_simple_pattern_lands_where_it_should(self):
         """One simulated second at 100 pixels a second is 100 pixels."""
         from trjoludus import color, draw
 
@@ -450,12 +451,10 @@ class TestMovingByTime(TimeTestCase):
         clock = Clock(max_fps=None, time_source=lambda: next(ticks),
                       sleep_function=lambda seconds: None)
 
-        exact = 0.0
         for _ in range(101):                 # 100 measured frames of 0.01s
-            exact += 100 * clock.tick()
-            box.set.x(round(exact))
+            box.move.x(100 * clock.tick())
 
-        self.assertEqual(box.x, 100)
+        self.assertEqual(box.screen_position[0], 100)
 
     def test_the_same_distance_at_a_different_frame_rate(self):
         from trjoludus import color, draw
@@ -466,11 +465,9 @@ class TestMovingByTime(TimeTestCase):
             ticks = iter([step * index for index in range(frames + 3)])
             clock = Clock(max_fps=None, time_source=lambda: next(ticks),
                           sleep_function=lambda seconds: None)
-            exact = 0.0
             for _ in range(frames + 1):
-                exact += 100 * clock.tick()
-                box.set.x(round(exact))
-            return box.x
+                box.move.x(100 * clock.tick())
+            return box.screen_position[0]
 
         self.assertEqual(travel(0.1, 10), travel(0.01, 100))
 

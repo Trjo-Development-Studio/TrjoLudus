@@ -546,6 +546,12 @@ Ordered by severity.
 | 2026-08-16 | The first frame of a run reports a delta of zero | There is no previous frame to measure against, so any other answer would be invented. Movement scaled by it stands still for one frame rather than jumping, which is the behaviour a game wants from a number it did not measure |
 | 2026-08-16 | A run resets the clock as it begins | Alongside clearing the stop request. Without it a second run would open with a delta measuring the gap between the two runs -- clamped, but still meaningless -- and a frame count carried over from the first |
 | 2026-08-16 | `fps` stays instantaneous, with no smoothing | It is `1 / delta`, which is jittery and honest. Smoothing is a display choice with a window length attached, and a game that wants one can average what it reads; baking one in would hide the frame that actually took long |
+| 2026-08-17 | A position is a number; a pixel is not | Positions keep fractions and the renderer rounds when it draws. Movement measured in seconds is fractional by nature -- 100 pixels a second is 1.67 of one at 60 frames a second -- and whole-pixel positions forced a game to either drop that fraction every frame or round it up every frame. One crawls, the other drifts 20% in a second |
+| 2026-08-17 | Rounding happens in one place, on the way to pixels | `Framebuffer` rounds every coordinate it is given, and `Drawable` rounds once into `screen_position`, which both its drawing and its hitbox are built from. Two roundings of the same number can disagree -- `round(x + n)` is not always `round(x) + n` -- so there is only ever one |
+| 2026-08-17 | The exact position *is* the public position | `player.x` returns 100.5 when that is where it is. Adding a separate precise API would mean two answers to "where is it", and the rounded one would only ever be a rendering detail leaking upward |
+| 2026-08-17 | Integers stay integers | A position keeps the type it was given, so a game that never uses fractions sees exactly what it saw before -- the same values, the same pixels, the same types |
+| 2026-08-17 | Sizes stay whole numbers | A position can fall between pixels because it is a place; a width cannot be half a pixel because it is a count of them. `rect(0.5, 0, 5, 5)` is fine and `rect(0, 0, 5.5, 5)` is not |
+| 2026-08-17 | Infinities and NaN are refused where positions are set | They cannot be rounded to a pixel, and `round(nan)` fails inside the renderer with a message about nothing a game would recognise. Catching them at the setter names the value that was wrong |
 | 2026-08-12 | The scene is cleared when a run finishes | The objects belonged to that run. Leaving them would make a second `run()` inherit the first game's scene and collide on every name; anything created before a run still takes part in it |
 | 2026-08-12 | One conformance suite runs the same contract assertions against every backend | A platform abstraction is only real if the layers above cannot tell which backend is underneath. Backends that cannot run on the current machine are skipped, never mocked -- a fake window server would agree with a wrong implementation |
 | 2026-08-12 | Tutorial code may use the public API only | No `trjoludus.platform`, no `ctypes`, no private internals. A lesson that cannot be written without reaching past the public API is evidence the public API is unfinished, and the fix belongs in the engine. `examples/window_test.py` currently breaks this rule out of necessity and is therefore classified as an engine smoke test, to be replaced by a real first lesson once backend selection exists |
@@ -617,8 +623,13 @@ nothing about game objects. Its whole contract is:
 | `width`, `height` | the size in pixels |
 | `resize(w, h)` | change the size; contents undefined afterwards |
 | `clear()` | fill with `DEFAULT_CLEAR_COLOUR`, opaque |
-| `set_pixel`, `fill_rect`, `draw_line`, `draw_text` | draw, clipped to the buffer, never raising for out-of-range coordinates |
-| `draw_image(image, x, y, scale=1.0)` | composite, clipped; `scale` grows from the top-left corner, nearest-neighbour, and `scale=1.0` must produce exactly the unscaled pixels |
+| `set_pixel`, `fill_rect`, `draw_line`, `draw_text` | draw, clipped to the buffer, never raising for out-of-range coordinates; coordinates may be fractional and are rounded here |
+| `draw_image(image, x, y, scale=1.0)` | composite, clipped; `x` and `y` may be fractional and are rounded; `scale` grows from the top-left corner, nearest-neighbour, and `scale=1.0` must produce exactly the unscaled pixels |
+
+Rounding is part of the contract, not an implementation detail: everything
+above this module works in exact positions, and this is where they become
+pixels. A replacement that rounded differently would move every sprite by up
+to half a pixel and, worse, disagree with the hitboxes computed above it.
 
 **A replacement implementation has to keep three promises**, all of which are
 already tested:

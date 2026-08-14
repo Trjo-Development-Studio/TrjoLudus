@@ -10,22 +10,15 @@
 **Movement should be measured in time, not in frames.** ``move.x(2)`` moves
 twice as far on a machine drawing twice as many frames. Scaling by
 :data:`delta` -- how long the last frame took -- covers the same distance per
-second on both.
-
-Positions are whole pixels and a fraction of a pixel per frame is not, so a
-game keeps the exact position itself and places the object from it::
-
-    def on_start(self):
-        self.player_x = 0.0
+second on both::
 
     def on_update(self, dt):
-        self.player_x += 100 * time.delta      # 100 pixels every second
-        self.player.set.x(round(self.player_x))
+        self.player.move.x(100 * time.delta)   # 100 pixels every second
 
-Round the total, not each step. ``move.x(round(100 * time.delta))`` reads more
-simply but drifts: at 60 frames a second each step is 1.67 pixels, every one
-of them rounds up to 2, and a second later the object has gone 20% too far.
-Rounding an absolute position cannot accumulate an error that way.
+That works because a position is a number rather than a pixel. At 60 frames a
+second each of those steps is 1.67 pixels, and the object keeps the fraction
+instead of losing it or rounding it up, so a second later it has gone exactly
+100 pixels. Only the renderer rounds, when it turns a position into a pixel.
 
 ``dt`` handed to :meth:`~trjoludus.game.Game.on_update` is the same number.
 :data:`delta` exists so that code which is not in ``on_update`` -- a helper, a

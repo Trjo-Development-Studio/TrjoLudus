@@ -18,6 +18,8 @@ through it acts on what the engine is actually drawing, and a future
 ``player.move.x(50)`` has an obvious place to live.
 """
 
+from math import isfinite
+
 from trjoludus.errors import TrjoLudusError
 
 __all__ = [
@@ -162,18 +164,29 @@ def current_scene() -> Scene:
     return _current
 
 
-def _check_pixels(label: str, value) -> int:
-    """Reject anything that is not a whole number of pixels.
+def _check_pixels(label: str, value):
+    """Reject anything that is not a number of pixels.
 
-    Positions index into the frame buffer, so a float would fail much later
-    with a message about slice indices. Catching it here says what is actually
-    wrong. ``bool`` is excluded because ``True`` as a distance is a mistake,
-    not an intention.
+    Fractions are allowed and kept. A speed of 100 pixels a second is 1.67
+    pixels in a frame at 60 per second, and an object that could only hold
+    whole pixels would either lose that fraction every frame or round it up
+    every frame -- crawling in one case, drifting in the other. The position
+    keeps what it is given and the renderer rounds when it draws.
+
+    ``bool`` is excluded because ``True`` as a distance is a mistake, not an
+    intention. Infinities and NaN are excluded because they cannot be rounded
+    to a pixel, and failing here says so far more clearly than failing later
+    inside the renderer.
     """
-    if not isinstance(value, int) or isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(
-            f"{label} must be a whole number of pixels, got "
+            f"{label} must be a number of pixels, got "
             f"{type(value).__name__}"
+        )
+    if not isfinite(value):
+        raise ValueError(
+            f"{label} must be a real distance, got {value}. There is no "
+            f"pixel that far away."
         )
     return value
 
@@ -235,8 +248,11 @@ class Placement:
     def x(self, pixels: int) -> None:
         """Put the object's left edge exactly ``pixels`` from the left.
 
+        Fractions are kept exactly. Only the renderer rounds, so movement
+        measured in seconds does not lose a fraction of a pixel per frame.
+
         Raises:
-            TypeError: If ``pixels`` is not a whole number.
+            TypeError: If ``pixels`` is not a number.
             SceneError: If the object has been removed.
         """
         self._owner._live().x = _check_pixels("x", pixels)
@@ -244,8 +260,10 @@ class Placement:
     def y(self, pixels: int) -> None:
         """Put the object's top edge exactly ``pixels`` from the top.
 
+        Fractions are kept exactly, as with :meth:`x`.
+
         Raises:
-            TypeError: If ``pixels`` is not a whole number.
+            TypeError: If ``pixels`` is not a number.
             SceneError: If the object has been removed.
         """
         self._owner._live().y = _check_pixels("y", pixels)
@@ -329,21 +347,30 @@ class Movement:
     def __init__(self, owner: "GameObject") -> None:
         self._owner = owner
 
-    def x(self, pixels: int) -> None:
+    def x(self, pixels) -> None:
         """Move right by ``pixels``, or left if negative.
 
+        Fractions add up exactly::
+
+            player.move.x(100 * time.delta)   # 100 pixels every second
+
+        Nothing is lost between frames and nothing is rounded up, because the
+        position keeps the fraction and only drawing rounds.
+
         Raises:
-            TypeError: If ``pixels`` is not a whole number.
+            TypeError: If ``pixels`` is not a number.
             SceneError: If the object has been removed.
         """
         obj = self._owner._live()
         obj.x += _check_pixels("a movement distance", pixels)
 
-    def y(self, pixels: int) -> None:
+    def y(self, pixels) -> None:
         """Move down by ``pixels``, or up if negative.
 
+        Fractions add up exactly, as with :meth:`x`.
+
         Raises:
-            TypeError: If ``pixels`` is not a whole number.
+            TypeError: If ``pixels`` is not a number.
             SceneError: If the object has been removed.
         """
         obj = self._owner._live()
@@ -448,11 +475,13 @@ class GameObject:
         return self._object.name
 
     @property
-    def x(self) -> int:
+    def x(self):
         """Distance in pixels from the left edge of the window.
 
         Assigning sets an absolute position; :attr:`move` changes it by a
-        relative amount.
+        relative amount. Either may be fractional, and the exact value is
+        what comes back -- this *is* the precise position, not a rounded view
+        of one. The renderer rounds when it draws, and nowhere else.
         """
         return self._live().x
 
@@ -461,11 +490,10 @@ class GameObject:
         self._live().x = _check_pixels("x", value)
 
     @property
-    def y(self) -> int:
+    def y(self):
         """Distance in pixels from the top edge of the window.
 
-        Assigning sets an absolute position; :attr:`move` changes it by a
-        relative amount.
+        May be fractional, as :attr:`x` may.
         """
         return self._live().y
 
@@ -474,8 +502,8 @@ class GameObject:
         self._live().y = _check_pixels("y", value)
 
     @property
-    def position(self) -> tuple[int, int]:
-        """``(x, y)`` of the image's top-left corner."""
+    def position(self) -> tuple:
+        """``(x, y)`` of the image's top-left corner, exactly as set."""
         obj = self._live()
         return (obj.x, obj.y)
 

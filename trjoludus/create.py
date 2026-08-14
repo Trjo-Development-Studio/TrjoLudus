@@ -20,11 +20,12 @@ from trjoludus.scene import SceneObject, current_scene
 __all__ = ["image"]
 
 
-def image(x: int, y: int, path, name: str):
+def image(x, y, path, name: str):
     """Create a named image object at ``(x, y)``.
 
     Args:
         x: Pixels from the left edge of the window to the image's left edge.
+            May be fractional; the renderer rounds when it draws.
         y: Pixels from the top edge of the window to the image's top edge.
         path: Path to a PNG file.
         name: What to call this object. Must be unique.
@@ -38,7 +39,7 @@ def image(x: int, y: int, path, name: str):
         SceneError: If ``name`` is already taken.
         TypeError: If ``x``, ``y`` or ``name`` has the wrong type.
     """
-    from trjoludus.scene import GameObject
+    from trjoludus.scene import GameObject, _check_pixels
 
     if not isinstance(name, str):
         raise TypeError(
@@ -46,12 +47,10 @@ def image(x: int, y: int, path, name: str):
         )
     if not name:
         raise ValueError("a game object needs a name; got an empty string")
+    # Positions may be fractional; the scene keeps them exactly and the
+    # renderer rounds when it draws. One check, in one place.
     for label, value in (("x", x), ("y", y)):
-        if not isinstance(value, int) or isinstance(value, bool):
-            raise TypeError(
-                f"{label} must be a whole number of pixels, got "
-                f"{type(value).__name__}"
-            )
+        _check_pixels(label, value)
 
     loaded = load_image(path)
     current_scene().add(SceneObject(name, loaded, x, y))
