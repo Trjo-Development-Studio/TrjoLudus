@@ -34,7 +34,7 @@ __all__ = ["ABI_VERSION", "handle", "implements", "library_path",
 #: The ABI this version of TrjoLudus speaks. A library built for a different
 #: one is refused rather than called: the alternative is calling a function
 #: whose arguments have moved, which is a crash with no explanation.
-ABI_VERSION = 3
+ABI_VERSION = 4
 
 #: Where a built library is looked for, in order. Several names rather than a
 #: branch on the host operating system: only one of them will exist, and

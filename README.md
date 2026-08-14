@@ -747,7 +747,7 @@ The subsystems, and whether `"auto"` prefers native for them:
 | Subsystem | `"auto"` prefers | Implemented today |
 | --- | --- | --- |
 | `rendering` | native | **Python and Rust** |
-| `image` | native | Python |
+| `image` | native | **Python and Rust** |
 | `collision` | native | neither yet |
 | `physics` | native | neither yet |
 | `ai` | native | neither yet |
@@ -759,11 +759,11 @@ The first six are the ones where the work is per-pixel or per-entity every
 frame. The rest stay on Python until there is a measurement saying otherwise --
 nothing is moved to Rust to fill in a table.
 
-**Rendering is the one that has moved.** With a native library present,
-`"auto"` renders in Rust; without one it renders in Python, and both draw the
-same pixels -- the test suite compares them byte for byte. Every other
-subsystem is still Python, and asking one of them for `"rust"` says so rather
-than pretending. The error distinguishes the two reasons it might fail:
+**Rendering and image decoding have moved.** With a native library present,
+`"auto"` uses Rust for both; without one it uses Python, and the results are
+identical -- the test suite compares them byte for byte, including which
+errors a damaged PNG produces. Every other subsystem is still Python, and
+asking one of them for `"rust"` says so rather than pretending. The error distinguishes the two reasons it might fail:
 
 ```text
 The native library is loaded but does not implement it yet.
@@ -801,6 +801,24 @@ Settings are per subsystem and independent: choosing one backend for rendering
 says nothing about physics. They last for the life of the process, because they
 are a statement about how the program should run rather than about one game.
 
+### Images are decoded once
+
+TrjoLudus keeps decoded images for the life of a run, so asking for the same
+file twice does not decode it twice:
+
+```python
+create.image(100, 100, "player.png", "player")
+player.animation.add("walk", ["walk_1.png", "walk_2.png"])
+player.set.image("player.png")     # already decoded; nothing happens again
+```
+
+An animation's frames, an image switched back and forth, and two objects
+sharing a picture are all one decode each. Images cannot be changed, so
+sharing one is simply two objects looking at the same picture.
+
+The images a run loads are released when it finishes, so a second `run()`
+starts with nothing held.
+
 ### How much faster is it?
 
 Rendering the same scenes into a 640x480 frame, on this machine:
@@ -816,8 +834,19 @@ Rendering the same scenes into a 640x480 frame, on this machine:
 | images, scaled 2x | 2444 ms | 15.7 ms |
 | **a whole frame** | **278 ms** | **4.8 ms** |
 
-Run it yourself with `python tools/benchmark_rendering.py`. It is
-informational: the numbers move with the machine, and no test depends on them.
+Loading a PNG, on the same machine. Filter type matters more than size --
+`Paeth` is what real drawing programs emit:
+
+| Work | Python | Rust |
+| --- | --- | --- |
+| unfilter, Paeth 256x256 | 65.9 ms | 1.4 ms |
+| unfilter, Paeth 512x512 | 283.9 ms | 5.9 ms |
+| opacity scan, 512x512 | 9.7 ms | 0.11 ms |
+| **whole decode, 256x256 Paeth** | **80.8 ms** | **1.5 ms** |
+
+Run them yourself with `python tools/benchmark_rendering.py` and
+`python tools/benchmark_images.py`. They are informational: the numbers move
+with the machine, and no test depends on them.
 
 The pixels are identical either way, which is the part that is tested rather
 than measured.

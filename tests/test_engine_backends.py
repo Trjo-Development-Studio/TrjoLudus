@@ -88,6 +88,9 @@ class BackendTestCase(unittest.TestCase):
         registry.reset()
         library.forget()
         renderer.forget()
+        from trjoludus.native import imaging
+        imaging.forget()
+        self.addCleanup(imaging.forget)
         self.addCleanup(renderer.forget)
         self.addCleanup(library.forget)
         self.addCleanup(registry.reset)
@@ -97,12 +100,16 @@ class BackendTestCase(unittest.TestCase):
         library._library = PretendLibrary(names)
         library._problem = None
         renderer.forget()
+        from trjoludus.native import imaging
+        imaging.forget()
 
     def pretend_nothing(self):
         """Make the loader answer as if there were no library at all."""
         library._library = None
         library._problem = "no native library found (test)"
         renderer.forget()
+        from trjoludus.native import imaging
+        imaging.forget()
 
 
 class TestDefaults(BackendTestCase):
@@ -676,20 +683,25 @@ class TestTheLibraryLoader(BackendTestCase):
         self.assertIsNone(library.problem())
         self.assertEqual(library.library_path(), found)
 
-    def test_a_real_library_implements_rendering_and_nothing_else(self):
+    #: The subsystems that have actually been migrated, in order.
+    MIGRATED = ("rendering", "image")
+
+    def test_a_real_library_implements_only_what_has_been_migrated(self):
         found = self.a_real_library()
         if found is None:
             self.skipTest("no compiled library anywhere; run cargo build")
         self.look_in(found.parent)
-        self.assertTrue(library.implements("rendering"))
+        for name in self.MIGRATED:
+            with self.subTest(system=name):
+                self.assertTrue(library.implements(name))
         for name in MODULES:
-            if name == "rendering":
+            if name in self.MIGRATED:
                 continue
             with self.subTest(system=name):
                 self.assertFalse(
                     library.implements(name),
-                    f"the native library claims to implement {name}, but "
-                    f"only rendering has been migrated",
+                    f"the native library claims to implement {name}, but it "
+                    f"has not been migrated",
                 )
 
     def test_a_real_library_puts_auto_on_rust_for_rendering(self):
@@ -700,12 +712,21 @@ class TestTheLibraryLoader(BackendTestCase):
         renderer.forget()
         self.assertEqual(registry.system("rendering").resolve(), RUST)
 
+    def test_auto_takes_rust_for_image_too(self):
+        found = self.a_real_library()
+        if found is None:
+            self.skipTest("no compiled library anywhere; run cargo build")
+        self.look_in(found.parent)
+        from trjoludus.native import imaging
+
+        imaging.forget()
+        self.assertEqual(registry.system("image").resolve(), RUST)
+
     def test_auto_still_leaves_unmigrated_systems_on_python(self):
         found = self.a_real_library()
         if found is None:
             self.skipTest("no compiled library anywhere; run cargo build")
         self.look_in(found.parent)
-        self.assertEqual(registry.system("image").resolve(), PYTHON)
         self.assertEqual(registry.system("animation").resolve(), PYTHON)
 
     def test_explicit_rust_for_an_unmigrated_system_says_so(self):
@@ -766,14 +787,15 @@ class TestTheLibraryLoader(BackendTestCase):
         self.assertIsNotNone(found, "the Rust crate declares no ABI version")
         self.assertEqual(int(found.group(1)), library.ABI_VERSION)
 
-    def test_the_rust_crate_implements_only_rendering(self):
-        """Milestone 3.1 migrates rendering, and nothing else."""
+    def test_the_rust_crate_implements_only_what_was_migrated(self):
+        """Rendering in 3.1, image in 3.2. Nothing else has moved."""
         source = (REPOSITORY / "rust" / "trjoludus-native" / "src"
                   / "lib.rs")
         if not source.is_file():
             self.skipTest("no Rust source here (installed package)")
-        self.assertIn('pub const IMPLEMENTED: &[&str] = &["rendering"];',
-                      source.read_text())
+        self.assertIn(
+            'pub const IMPLEMENTED: &[&str] = &["rendering", "image"];',
+            source.read_text())
 
 
 class TestThePublicApiIsUnchanged(BackendTestCase):

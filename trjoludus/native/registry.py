@@ -138,6 +138,10 @@ class System:
             from trjoludus.native import renderer
 
             return renderer.available()
+        if self._name == "image":
+            from trjoludus.native import imaging
+
+            return imaging.available()
         return True
 
     def resolve(self) -> str:

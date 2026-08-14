@@ -613,6 +613,14 @@ Ordered by severity.
 | 2026-08-24 | Table-backed attributes cost about 80ns more than a slot | Measured: 36ns to 116ns for a read. About 0.1ms a frame for five hundred objects moved once each, against a 4ms frame. That is the price of there being one copy of a position, and it is worth it |
 | 2026-08-24 | Image pixels are lent, not copied, to the renderer | `ctypes` hands a `bytes` straight to a `char *` parameter. Wrapping it in an array type instead copied the whole image on every draw call -- 7 microseconds for a 256 KB sprite, once per object per frame |
 | 2026-08-24 | ABI 3 adds the world, and the version check proved itself | Bumping it made the loader refuse the new library against the old Python with both numbers named, which is exactly what the check is for. Old and new are not compatible and do not pretend to be |
+| 2026-08-25 | Only the two loops that touch every byte moved to Rust | Unfiltering and the opacity scan. Chunk walking, CRCs, zlib and palette expansion stay in Python, where they are cold and where clear messages about a damaged file matter most. Moving a whole PNG decoder would have been more code, more risk and no more speed |
+| 2026-08-25 | `zlib` stays Python's | It is already C, and replacing it would mean a Rust compression dependency in a crate that has none |
+| 2026-08-25 | The error messages are raised in Python either way | The native side reports *which* filter byte was wrong through an out-parameter; Python raises the sentence it has always raised. One wording, one place, and a differential test that compares the exceptions as well as the pixels |
+| 2026-08-25 | An image is not worth half-decoding | Every filter byte is checked before a single one is written, so a bad filter on the last row leaves the output buffer untouched -- which is what Python did by raising before it got there |
+| 2026-08-25 | Decoded images are cached for a run, keyed by resolved path | An animation is a list of paths and a game switches pictures back and forth; the same file was being decoded again every time. Resolved, so `player.png` and `./player.png` are one entry. Images are immutable, so handing the same one out twice has no consequences |
+| 2026-08-25 | A failed load is not cached | The next attempt should try again: a file that was missing may have appeared, and remembering a failure would make that impossible |
+| 2026-08-25 | The cache belongs to the run, not the process | It goes when the run does, like the world and the drawing lists. A process-wide image cache would hold every sprite a program ever loaded for as long as it ran |
+| 2026-08-25 | Paeth's tie-break rule cannot matter, and that is checked rather than argued | If left and above are equally close to the estimate but differ, then left + above = 2 x corner, so the estimate is corner and its distance is zero -- and the guard then forces all three equal, a contradiction. A test sweeps every byte triple to confirm the case is unreachable, because "no input can reach this" is exactly the kind of claim that is wrong |
 | 2026-08-12 | The scene is cleared when a run finishes | The objects belonged to that run. Leaving them would make a second `run()` inherit the first game's scene and collide on every name; anything created before a run still takes part in it |
 | 2026-08-12 | One conformance suite runs the same contract assertions against every backend | A platform abstraction is only real if the layers above cannot tell which backend is underneath. Backends that cannot run on the current machine are skipped, never mocked -- a fake window server would agree with a wrong implementation |
 | 2026-08-12 | Tutorial code may use the public API only | No `trjoludus.platform`, no `ctypes`, no private internals. A lesson that cannot be written without reaching past the public API is evidence the public API is unfinished, and the fix belongs in the engine. `examples/window_test.py` currently breaks this rule out of necessity and is therefore classified as an engine smoke test, to be replaced by a real first lesson once backend selection exists |
@@ -854,9 +862,9 @@ The loader looks in `trjoludus/native/lib/`, found relative to the loader's own
 file -- the same place whether TrjoLudus is a checkout or an installed package
 somewhere unrelated to it.
 
-### The rendering subsystem
+### The migrated subsystems
 
-The first subsystem to have both implementations:
+Two so far. Rendering, and the two hot loops of image decoding:
 
 | Piece | Where |
 | --- | --- |
@@ -864,6 +872,16 @@ The first subsystem to have both implementations:
 | Python implementation | `trjoludus/rendering_python.py` -- `Framebuffer` |
 | the binding | `trjoludus/native/renderer.py` -- `NativeFramebuffer`, same surface |
 | Rust implementation | `rust/trjoludus-native/src/render.rs` |
+
+Image decoding is deliberately only half migrated:
+
+| Piece | Where |
+| --- | --- |
+| the choice | `trjoludus/image.py` -- `image.engine` |
+| structure, CRCs, zlib, palettes | `trjoludus/image.py`, Python, always |
+| unfiltering and the opacity scan | `rust/trjoludus-native/src/image.rs` |
+| the binding | `trjoludus/native/imaging.py` |
+| decoded images | `EngineState.resources`, keyed by resolved path |
 
 The two framebuffers are interchangeable: same methods, same arguments, same
 pixels, and `pixels` is a `bytearray` either way. A test asserts the two

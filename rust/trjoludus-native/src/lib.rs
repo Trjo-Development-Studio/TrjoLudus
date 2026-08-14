@@ -47,6 +47,7 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod image;
 pub mod render;
 pub mod world;
 
@@ -62,7 +63,7 @@ use world::{Object, World, WorldMut};
 /// Python refuses a library whose number is not the one it expects, rather
 /// than calling a function whose arguments have since moved. Bump it whenever
 /// the meaning of any exported function changes.
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 /// The subsystems implemented here.
 ///
@@ -72,7 +73,7 @@ pub const ABI_VERSION: u32 = 3;
 /// an honest refusal.
 ///
 /// The names are the ones Python uses.
-pub const IMPLEMENTED: &[&str] = &["rendering"];
+pub const IMPLEMENTED: &[&str] = &["rendering", "image"];
 
 /// The call did what it was asked.
 pub const STATUS_OK: c_int = 0;
@@ -84,6 +85,12 @@ pub const STATUS_BAD_BUFFER: c_int = -2;
 pub const STATUS_PANIC: c_int = -3;
 /// The slot asked about holds no live object. An answer, not a failure.
 pub const STATUS_NO_OBJECT: c_int = -4;
+/// The filtered data was shorter than the image's size implies.
+pub const STATUS_SHORT_DATA: c_int = -5;
+/// A filter byte that is not one of the five PNG defines. Which one is
+/// written to the caller's out-parameter, so Python can name it in the
+/// message it already raises.
+pub const STATUS_BAD_FILTER: c_int = -6;
 
 /// Returns the ABI version this library was built against.
 ///
@@ -399,6 +406,97 @@ pub unsafe extern "C" fn trjoludus_render_draw_image(
     })
 }
 
+/// Reverse the per-scanline filters of a decompressed PNG.
+///
+/// The expensive half of decoding. Python has already checked the file's
+/// structure and run zlib; this turns the filtered scanlines into pixels.
+///
+/// `out` must be exactly `width * samples * height` bytes and is written only
+/// on success -- an image is not worth half-decoding.
+///
+/// On [`STATUS_BAD_FILTER`], `bad_filter` receives the offending byte so that
+/// Python can raise the message it has always raised. It is untouched
+/// otherwise.
+///
+/// # Safety
+///
+/// `raw` must address `raw_length` readable bytes and `out` `out_length`
+/// writable ones, both valid and unaliased for this call. `bad_filter` must
+/// be a valid pointer or null. Nothing is kept.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn trjoludus_image_unfilter(
+    raw: *const u8,
+    raw_length: usize,
+    out: *mut u8,
+    out_length: usize,
+    width: usize,
+    height: usize,
+    samples: usize,
+    bad_filter: *mut i32,
+) -> c_int {
+    guarded(|| {
+        if raw.is_null() || out.is_null() {
+            return STATUS_NULL;
+        }
+        // Safety: forwarded from this function's own contract.
+        let source = unsafe { slice::from_raw_parts(raw, raw_length) };
+        // Safety: as above; `out` is writable and does not overlap `raw`.
+        let target = unsafe { slice::from_raw_parts_mut(out, out_length) };
+
+        match image::unfilter(source, target, width, height, samples) {
+            Ok(()) => STATUS_OK,
+            Err(image::ImageError::BadSize) => STATUS_BAD_BUFFER,
+            Err(image::ImageError::WrongOutputSize) => STATUS_BAD_BUFFER,
+            Err(image::ImageError::NotEnoughData) => STATUS_SHORT_DATA,
+            Err(image::ImageError::UnknownFilter(found)) => {
+                if !bad_filter.is_null() {
+                    // Safety: the caller promises a valid pointer or null.
+                    unsafe { *bad_filter = found as i32 };
+                }
+                STATUS_BAD_FILTER
+            }
+        }
+    })
+}
+
+/// Whether every pixel of a BGRA image is fully opaque.
+///
+/// Writes 1 or 0 to `out`, and only on success.
+///
+/// # Safety
+///
+/// `pixels` must address `length` readable bytes valid for this call, and
+/// `out` must be a valid pointer. Nothing is kept.
+#[no_mangle]
+pub unsafe extern "C" fn trjoludus_image_opaque(
+    pixels: *const u8,
+    length: usize,
+    out: *mut c_int,
+) -> c_int {
+    guarded(|| {
+        if out.is_null() || (pixels.is_null() && length != 0) {
+            return STATUS_NULL;
+        }
+        // An empty image has no transparent pixel in it, which is what Python
+        // answers too -- `all()` of nothing is true.
+        let data: &[u8] = if length == 0 {
+            &[]
+        } else {
+            // Safety: forwarded from this function's own contract.
+            unsafe { slice::from_raw_parts(pixels, length) }
+        };
+        match image::opaque(data) {
+            Ok(answer) => {
+                // Safety: the caller promises a valid pointer.
+                unsafe { *out = answer as c_int };
+                STATUS_OK
+            }
+            Err(_) => STATUS_BAD_BUFFER,
+        }
+    })
+}
+
 /// The engine's object table, as it arrives from Python.
 ///
 /// Six pointers and a count: one array per field, all the same length. Python
@@ -669,7 +767,6 @@ mod tests {
     #[test]
     fn nothing_else_is_implemented_yet() {
         for name in [
-            "image",
             "collision",
             "physics",
             "ai",
@@ -748,6 +845,117 @@ mod tests {
             )
         };
         assert_eq!(status, STATUS_NULL);
+    }
+
+    #[test]
+    fn unfiltering_through_the_abi_works_and_refuses_rubbish() {
+        let raw = [0u8, 1, 2, 3, 4, 0, 5, 6, 7, 8];
+        let mut out = [0u8; 8];
+        let mut bad = -1i32;
+        let status = unsafe {
+            trjoludus_image_unfilter(
+                raw.as_ptr(), raw.len(), out.as_mut_ptr(), out.len(),
+                4, 2, 1, &mut bad,
+            )
+        };
+        assert_eq!(status, STATUS_OK);
+        assert_eq!(out, [1, 2, 3, 4, 5, 6, 7, 8]);
+
+        // Null pointers.
+        assert_eq!(
+            unsafe {
+                trjoludus_image_unfilter(
+                    std::ptr::null(), 10, out.as_mut_ptr(), out.len(),
+                    4, 2, 1, std::ptr::null_mut(),
+                )
+            },
+            STATUS_NULL
+        );
+        // Too little data.
+        assert_eq!(
+            unsafe {
+                trjoludus_image_unfilter(
+                    raw.as_ptr(), 3, out.as_mut_ptr(), out.len(),
+                    4, 2, 1, std::ptr::null_mut(),
+                )
+            },
+            STATUS_SHORT_DATA
+        );
+    }
+
+    #[test]
+    fn a_bad_filter_reports_which_one() {
+        let raw = [9u8, 1, 2, 3, 4, 0, 5, 6, 7, 8];
+        let mut out = [0u8; 8];
+        let mut bad = -1i32;
+        let status = unsafe {
+            trjoludus_image_unfilter(
+                raw.as_ptr(), raw.len(), out.as_mut_ptr(), out.len(),
+                4, 2, 1, &mut bad,
+            )
+        };
+        assert_eq!(status, STATUS_BAD_FILTER);
+        assert_eq!(bad, 9);
+        assert_eq!(out, [0; 8], "it wrote despite refusing");
+    }
+
+    #[test]
+    fn a_null_bad_filter_pointer_is_allowed() {
+        let raw = [9u8, 1, 2, 3, 4, 0, 5, 6, 7, 8];
+        let mut out = [0u8; 8];
+        assert_eq!(
+            unsafe {
+                trjoludus_image_unfilter(
+                    raw.as_ptr(), raw.len(), out.as_mut_ptr(), out.len(),
+                    4, 2, 1, std::ptr::null_mut(),
+                )
+            },
+            STATUS_BAD_FILTER
+        );
+    }
+
+    #[test]
+    fn opacity_through_the_abi() {
+        let mut answer = -1;
+        let opaque = [1u8, 2, 3, 255];
+        assert_eq!(
+            unsafe { trjoludus_image_opaque(opaque.as_ptr(), 4, &mut answer) },
+            STATUS_OK
+        );
+        assert_eq!(answer, 1);
+
+        let clear = [1u8, 2, 3, 0];
+        assert_eq!(
+            unsafe { trjoludus_image_opaque(clear.as_ptr(), 4, &mut answer) },
+            STATUS_OK
+        );
+        assert_eq!(answer, 0);
+
+        // Empty is opaque, as `all()` of nothing is true.
+        assert_eq!(
+            unsafe { trjoludus_image_opaque(std::ptr::null(), 0, &mut answer) },
+            STATUS_OK
+        );
+        assert_eq!(answer, 1);
+
+        // Not a whole number of pixels.
+        assert_eq!(
+            unsafe { trjoludus_image_opaque(opaque.as_ptr(), 3, &mut answer) },
+            STATUS_BAD_BUFFER
+        );
+        // Nowhere to put the answer.
+        assert_eq!(
+            unsafe {
+                trjoludus_image_opaque(opaque.as_ptr(), 4, std::ptr::null_mut())
+            },
+            STATUS_NULL
+        );
+    }
+
+    #[test]
+    fn image_is_implemented() {
+        let name = CString::new("image").unwrap();
+        assert_eq!(unsafe { trjoludus_implements(name.as_ptr()) }, 1);
     }
 
     #[test]

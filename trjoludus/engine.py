@@ -165,7 +165,7 @@ class EngineState:
     :func:`current`, never built by a game.
     """
 
-    __slots__ = ("objects", "world", "drawings", "clock")
+    __slots__ = ("objects", "world", "drawings", "clock", "resources")
 
     def __init__(self) -> None:
         from trjoludus.scene import Scene
@@ -184,10 +184,21 @@ class EngineState:
         #: so that anything wanting "how long was the last frame" has one
         #: place to ask. ``None`` outside a run.
         self.clock = None
+        #: Decoded images, by the path they were loaded from. Decoding a PNG
+        #: is the most expensive thing a game does that it does not have to do
+        #: twice: an animation's frames, and an image switched back and forth,
+        #: are the same files over and over. Images are immutable, so handing
+        #: the same one out again is not a shortcut with consequences.
+        #:
+        #: Belongs to the run, like everything else here. A second run decodes
+        #: afresh rather than inheriting whatever the first one happened to
+        #: load.
+        self.resources: dict = {}
 
     def __repr__(self) -> str:
         return (f"EngineState({len(self.world)} objects, "
-                f"{len(self.drawings._lists)} drawing lists)")
+                f"{len(self.drawings._lists)} drawing lists, "
+                f"{len(self.resources)} images)")
 
 
 #: The state everything reads. Replaced when a run begins, never mutated into

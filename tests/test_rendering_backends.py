@@ -271,30 +271,60 @@ class TestObjectsAndDrawingsTogether(BothRenderers):
 
 
 class TestAnimation(BothRenderers):
-    def test_an_animation_renders_the_same(self):
-        def build():
-            create.image(10, 10, self.frames[0], "player")
-            GameObject("player").animation.add("walk", self.frames)
-            GameObject("player").animation.play("walk", fps=1000, loop=True)
+    """Both renderers must draw the frame the Animator is on.
 
-        self.assertSameFrame(build, frames=6)
+    The animation is advanced by an exact number of seconds and then stopped,
+    so both runs render a known picture. Leaving it playing would compare the
+    two runs' *timing*: an animation advances on how long each frame took, the
+    two renderers do not take the same time, and after a few frames they can
+    honestly be on different pictures. That is not a rendering difference, and
+    an earlier version of this test failed on it about one run in four.
 
-    def test_a_scaled_animation(self):
+    What the renderer owes is to draw whatever the Animator chose. That is
+    what this checks.
+    """
+
+    def settled_on(self, frame_wanted, scale=None):
+        """Build a scene whose animation has stopped on a chosen frame."""
         def build():
             create.image(6, 6, self.frames[0], "player")
             player = GameObject("player")
-            player.set.scale(2)
+            if scale is not None:
+                player.set.scale(scale)
             player.animation.add("walk", self.frames)
-            player.animation.play("walk", fps=1000, loop=True)
+            player.animation.play("walk", fps=10, loop=True)
+            # Exactly (frame_wanted - 1) frames on, at a tenth of a second
+            # each, then stopped so the loop's own advance changes nothing.
+            current_scene().advance_animations(0.1 * (frame_wanted - 1))
+            player.animation.stop("walk")
 
-        self.assertSameFrame(build, frames=6)
+        return build
 
-    def test_the_current_frame_is_what_gets_drawn(self):
-        """The renderer must follow the Animator, not a copy of it."""
+    def test_it_settles_where_it_should(self):
+        """Otherwise the tests below could agree on the wrong picture."""
+        registry.reset()
+        current_scene().clear()
+        self.settled_on(3)()
+        player = GameObject("player")
+        self.assertEqual(player.animation.frame, 3)
+        self.assertFalse(player.animation.is_playing)
+
+    def test_an_animation_renders_the_same(self):
+        for frame in (1, 2, 3, 4):
+            with self.subTest(frame=frame):
+                self.assertSameFrame(self.settled_on(frame))
+
+    def test_a_scaled_animation(self):
+        for frame in (1, 3):
+            with self.subTest(frame=frame):
+                self.assertSameFrame(self.settled_on(frame, scale=2))
+
+    def test_a_playing_animation_still_reaches_both_renderers(self):
+        """Left playing, both must draw *some* frame of it, not nothing."""
         if not self.native_available():
             self.skipTest("no native renderer built here")
 
-        seen = {}
+        drawn = {}
         for engine in (PYTHON, RUST):
             registry.reset()
             rendering.engine = engine
@@ -313,18 +343,22 @@ class TestAnimation(BothRenderers):
 
                 def on_update(self, dt):
                     self.count += 1
-                    if self.count >= 12:
+                    if self.count >= 20:
                         self.quit()
 
                 def on_stop(self):
                     frame = backend.windows[0].last_frame
-                    seen[engine] = (frame[2], frame[1], frame[0])
+                    drawn[engine] = (frame[2], frame[1], frame[0])
 
             Application(G(), size=self.SIZE, max_fps=None,
                         backend=backend).run()
 
-        self.assertEqual(seen[PYTHON], seen[RUST])
-        self.assertIn(seen[PYTHON], COLOURS)
+        # Which frame each landed on depends on how fast it ran, which is not
+        # the renderer's business. That each drew a real frame of the
+        # animation is.
+        for engine, colour in drawn.items():
+            with self.subTest(engine=engine):
+                self.assertIn(colour, COLOURS)
 
 
 class TestBackendSelection(BothRenderers):

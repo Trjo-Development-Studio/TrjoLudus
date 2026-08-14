@@ -57,7 +57,8 @@ class TestTheStateIsStructured(EngineStateTestCase):
 
     def test_its_parts_are_named_rather_than_arbitrary(self):
         self.assertEqual(set(engine.EngineState.__slots__),
-                         {"objects", "world", "drawings", "clock"})
+                         {"objects", "world", "drawings", "clock",
+                          "resources"})
 
     def test_there_are_no_loose_module_globals_left(self):
         """scene and ui used to keep their own singletons."""

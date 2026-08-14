@@ -97,6 +97,18 @@ is added to that list **in the step that implements it** -- one claiming to be
 implemented while doing nothing would make `<system>.engine = "rust"` succeed
 and change nothing, which is worse than an honest refusal.
 
+Plus the two hot loops of PNG decoding:
+
+```rust
+trjoludus_image_unfilter(raw, len, out, out_len, w, h, samples, bad_filter) -> i32
+trjoludus_image_opaque(pixels, len, out) -> i32
+```
+
+Not a decoder: Python still walks the chunks, checks the CRCs, runs zlib and
+expands palettes. Only the two loops that touch every byte are here, because
+those are the two that measurably cost anything. `bad_filter` receives the
+offending byte so Python can raise the message it has always raised.
+
 Plus the engine's objects:
 
 ```rust

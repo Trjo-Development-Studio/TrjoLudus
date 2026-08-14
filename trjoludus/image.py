@@ -39,6 +39,31 @@ class ImageError(TrjoLudusError):
     """Raised when an image cannot be loaded or decoded."""
 
 
+def _opacity_of(pixels: bytes) -> bool:
+    """Whether every pixel is fully opaque. The reference implementation.
+
+    A scan of every alpha byte in the image, which is the single most
+    expensive step of decoding a large PNG in Python -- more than
+    unfiltering and colour conversion together, for an unfiltered one.
+    """
+    return all(pixels[index] == 255 for index in range(3, len(pixels), 4))
+
+
+def opacity_of(pixels: bytes) -> bool:
+    """Whether every pixel is fully opaque.
+
+    Runs natively when a native implementation is available and the game has
+    not asked for otherwise; otherwise :func:`_opacity_of`. Both give the same
+    answer -- the differential tests are what prove it.
+    """
+    native = _native()
+    if native is not None:
+        answer = native.opaque(pixels)
+        if answer is not None:
+            return answer
+    return _opacity_of(pixels)
+
+
 class Image:
     """Decoded pixel data, ready to be drawn.
 
@@ -64,7 +89,7 @@ class Image:
         self._pixels = bytes(pixels)
         # Worth knowing once rather than per frame: a fully opaque image can be
         # drawn with whole-row copies instead of per-pixel alpha testing.
-        self._opaque = all(pixels[i] == 255 for i in range(3, len(pixels), 4))
+        self._opaque = opacity_of(self._pixels)
 
     @property
     def width(self) -> int:
@@ -94,7 +119,16 @@ class Image:
 
 
 def load_image(path) -> Image:
-    """Load a PNG file.
+    """Load a PNG file, decoding it once per run.
+
+    A game asks for the same file more than once as a matter of course: an
+    animation's frames are a list of paths, and switching an object's picture
+    back and forth asks for each of them again. Decoded images are kept for
+    the run and handed out again rather than decoded twice.
+
+    That is safe because an :class:`Image` cannot be changed. Two objects
+    sharing one is two objects looking at the same picture, which is what they
+    asked for.
 
     Args:
         path: Path to a PNG file.
@@ -103,7 +137,21 @@ def load_image(path) -> Image:
         ImageError: If the file is missing, is not a PNG, or uses a PNG
             feature this decoder does not support.
     """
+    from trjoludus import engine
+
     file = Path(path)
+    # The resolved path, so that "player.png" and "./player.png" are one
+    # entry rather than two decodes of the same file.
+    try:
+        key = str(file.resolve())
+    except OSError:                      # pragma: no cover -- unusual paths
+        key = str(file)
+
+    cache = engine.current().resources
+    found = cache.get(key)
+    if found is not None:
+        return found
+
     try:
         data = file.read_bytes()
     except FileNotFoundError:
@@ -112,9 +160,12 @@ def load_image(path) -> Image:
         raise ImageError(f"Could not read image {file}: {exc}") from exc
 
     try:
-        return decode_png(data)
+        loaded = decode_png(data)
     except ImageError as exc:
         raise ImageError(f"{file}: {exc}") from None
+
+    cache[key] = loaded
+    return loaded
 
 
 #: The largest a chunk may claim to be. PNG stores lengths in four bytes but
@@ -230,7 +281,7 @@ def decode_png(data: bytes) -> Image:
         raise ImageError(f"PNG image data is corrupt: {exc}") from exc
 
     samples = _SAMPLES[colour_type]
-    rows = _unfilter(raw, width, height, samples)
+    rows = unfilter(raw, width, height, samples)
     pixels = _to_bgra(rows, width, height, colour_type, palette, transparency)
     return Image(width, height, pixels)
 
@@ -262,8 +313,60 @@ def _read_header(body: bytes) -> tuple[int, int, int]:
     return width, height, colour_type
 
 
+def unfilter(raw: bytes, width: int, height: int, samples: int) -> bytes:
+    """Reverse the per-scanline filters PNG applies before compression.
+
+    Runs natively when a native implementation is available and the game has
+    not asked for otherwise; otherwise :func:`_unfilter`. Both produce the
+    same bytes -- the differential tests are what prove it -- and both raise
+    the same errors, because the messages are raised here either way.
+
+    This is the expensive half of decoding: Paeth filtering a 512x512 sprite
+    takes the better part of a third of a second in Python.
+    """
+    if _native() is None:
+        return _unfilter(raw, width, height, samples)
+
+    stride = width * samples
+    expected = (stride + 1) * height
+    if len(raw) < expected:
+        raise ImageError(
+            f"PNG pixel data is truncated: expected {expected} bytes, got "
+            f"{len(raw)}"
+        )
+
+    answer = _native().unfilter(raw, width, height, samples)
+    if answer.pixels is not None:
+        return answer.pixels
+    if answer.bad_filter is not None:
+        raise ImageError(f"unknown PNG filter type {answer.bad_filter}")
+    # The length was checked above, so this is a size the native side could
+    # not work with. Fall back rather than invent a failure the Python
+    # implementation would not have had.
+    return _unfilter(raw, width, height, samples)
+
+
+def _native():
+    """The native image implementation, or ``None`` to use Python's.
+
+    Asked per image rather than once: a game may set ``image.engine`` before
+    a run, and decoding is cold enough that a dictionary lookup does not
+    matter.
+    """
+    from trjoludus.native import PYTHON, registry
+
+    system = registry.system("image")
+    if system.engine == PYTHON:
+        return None
+    if system.resolve() != PYTHON:
+        from trjoludus.native import imaging
+
+        return imaging
+    return None
+
+
 def _unfilter(raw: bytes, width: int, height: int, samples: int) -> bytes:
-    """Reverse the per-scanline filters PNG applies before compression."""
+    """Reverse the per-scanline filters. The reference implementation."""
     stride = width * samples
     expected = (stride + 1) * height
     if len(raw) < expected:
