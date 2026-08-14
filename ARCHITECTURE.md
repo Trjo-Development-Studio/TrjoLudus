@@ -6,9 +6,14 @@ This document records *why* things are the way they are. It is written to be
 re-read months later, and to be read by an AI assistant that has no memory of
 the conversation the decisions came from.
 
-> **Status:** Milestone 1 (window + game loop) is designed but **not yet
-> implemented**. Everything below the "Decision log" is agreed; the code is not
-> written.
+> **Status:** Milestones 1 (window + game loop) and 2 (core engine: objects,
+> drawing, input, interaction) are **implemented and verified on Linux/X11**.
+> The Win32 backend is implemented and structurally tested, but has **never
+> been run on Windows**.
+>
+> Sections 1-6 describe the platform investigation and the loop, and are still
+> current. Section 7 has been rewritten to describe the API that exists rather
+> than the one that was planned. Section 10 records how it was built.
 
 ---
 
@@ -298,7 +303,7 @@ therefore no vsync; an uncapped loop would spin a CPU core at 100%.
 
 ---
 
-## 7. Public API (Milestone 1)
+## 7. Public API
 
 ```python
 import trjoludus as tl
@@ -318,19 +323,60 @@ class Game:
 tl.run(game, *, title="TrjoLudus", size=(1280, 720), max_fps=60) -> None
 ```
 
-**There is deliberately no `on_draw()` yet.** Milestone 1 has no renderer, so a
-draw hook would have nothing to call into. It arrives in **Milestone 3 (2D
-shape rendering)**, per the roadmap in the README -- Milestone 2 is keyboard and
-mouse input. Adding it then is purely additive: games written against the
-Milestone 1 API keep working untouched, because they simply do not override it.
+**There is still no `on_draw()`, and it is no longer expected.** The reason it
+was deferred was that there was nothing to draw into; what arrived instead was
+*retained* drawing. A game says what should exist -- `create.image(...)`,
+`menu.rect(...)` -- and the engine keeps drawing it every frame. Nothing has
+needed a per-frame draw hook, because nothing has needed to re-issue drawing
+commands. If an immediate-mode hook is ever added it stays additive: games
+that do not override it are unaffected.
 
-Events are platform-neutral frozen dataclasses. Milestone 1 produces exactly
-two:
+Events are platform-neutral frozen dataclasses:
 
 ```python
 WindowCloseRequested()
 WindowResized(width, height)
+KeyPressed(key, window)
+KeyReleased(key, window)
+MouseMoved(x, y, window)
+MouseButtonPressed(button, x, y, window)
+MouseButtonReleased(button, x, y, window)
 ```
+
+### The rest of the public API
+
+```python
+create.image(x, y, path, name)        # a named object the engine keeps drawing
+GameObject(name)                      # a handle on one
+    .set.x(v) / .set.y(v)             # absolute position
+    .move.x(v) / .move.y(v)           # relative movement
+    .x / .y / .position / .size       # where and how big
+    .visible / .destroy()
+
+draw.list(name)                       # a named group of drawing
+    .line(x, y, end_x, end_y, colour) -> Drawable
+    .rect(x, y, width, height, colour) -> Drawable
+    .text(x, y, message, colour) -> Drawable
+    .show() / .hide() / .clear() / .destroy()
+
+Drawable                              # what a drawing call hands back
+    .set.x/.set.y/.set.scale/.set.color/.set.text
+    .add.scale / .remove.scale
+    .move.x / .move.y
+    .mouse.hover() / .mouse.clicked()
+    .show() / .hide() / .bounds / .contains(x, y)
+
+keyboard.wait(input.key)              # blocks; updates `key`
+mouse.wait(input.mouse)               # blocks; updates `mouse.button`
+input.wait()                          # blocks for whichever comes first
+mouse.x / mouse.y / mouse.position    # where the pointer is now
+mouse.pressed("LEFT")                 # is it held now
+color.red, color.blue, ...            # named colours, or a plain (r, g, b)
+```
+
+**Position is spelled the same everywhere.** `set.x()` places something
+absolutely and `move.x()` nudges it, on both game objects and drawings. There
+is no `add.x()`: relative movement already has a word.
 
 ### What a game will look like
 
@@ -378,9 +424,10 @@ Ordered by severity.
 4. **The Windows backend cannot be tested on the development machine.** Win32
    code will be written against documentation and remain unverified until run
    on Windows or in a VM. Plan for it to need iteration.
-5. **Milestone 1 shows a blank window.** With no renderer, automated tests must
-   assert on lifecycle and events rather than pixels; visual confirmation is a
-   manual example script.
+5. **The renderer is pure Python, and its cost is unmeasured.** Every pixel is
+   touched by the interpreter. It is fast enough for what has been built, and
+   nothing has been optimised on a guess. See section 11 for the boundary a
+   faster implementation would replace.
 6. **Native Wayland is deferred, not free.** See section 3. It is a real project
    of its own whenever it is taken on.
 
@@ -474,13 +521,23 @@ Ordered by severity.
 | 2026-08-13 | A drawing has only the properties its kind has | `set.text()` on a rectangle raises rather than being ignored, and names what that kind does have. A property that quietly does nothing is a bug the game cannot see |
 | 2026-08-13 | Position and size are stored once and read by both drawing and hit-testing | There is one copy of where a drawing is, so a change cannot make what is drawn and what is clickable disagree. Bounds are computed from it on demand rather than cached, which is why no change needs to remember to invalidate anything |
 | 2026-08-13 | Drawings hold named fields, not the arguments they were made with | Mutation needs somewhere to put a new value. Keeping `x`, `message` and the rest as fields is what makes changing one of them a one-line assignment instead of rebuilding a tuple |
+| 2026-08-14 | A stop request belongs to one run, and a run clears it as it begins | Without this a `Game` instance could only ever be run once: the flag it set the first time was still true, so the second run stopped before its first frame. Cleared at the start rather than the end so the answer stays readable afterwards -- a caller can still tell a game that asked to stop from one whose window went away |
+| 2026-08-14 | The application asks the game to clear it, rather than writing the flag itself | `app.py` reads `quit_requested` and never names the private attribute, which a test enforces. The reset is `Game._begin_run()`, so the one piece of state stays owned by the class that owns the request |
+| 2026-08-14 | `set.x()` and `move.x()` mean absolute and relative, on drawings *and* game objects | Supersedes 2026-08-13's "there is no `set.x`". One concept should have one spelling wherever it appears, and a drawing that could never be repositioned was the price of the old rule. `add.x`/`remove.x` are still absent -- relative movement already has a word |
+| 2026-08-14 | A drawing's fields are read-only; `set` and `move` are how it changes | They used to be plain slots, so `drawing.x = 1.5` wrote a float straight into a position and failed much later somewhere else. Routing every change through a namespace means every change is checked |
+| 2026-08-14 | Placing a line moves the whole line | `set.x()` on a line shifts both ends, so it keeps the shape it was drawn with. Moving one end is a different operation and would need a different name |
+| 2026-08-14 | `GameObject.x = 250` stays supported alongside `set.x(250)` | It is what Step 2 shipped and what existing games are written against. Removing a working spelling to make room for a new one costs more than keeping both |
+| 2026-08-14 | The PNG decoder refuses damage rather than decoding past it | Every chunk must fit inside the file, claim a believable length, and match its own checksum, and the file must start with IHDR and reach IEND. Slicing past the end of a `bytes` yields a short string rather than an error, so without these checks a truncated file decoded quietly into wrong pixels |
+| 2026-08-14 | CRCs are checked, though they were optional | `zlib` is already imported for the pixel data, so it cost one line and catches the damage a length check cannot -- a flipped bit inside a chunk that is still the right size |
+| 2026-08-14 | `mouse.pressed()` and `mouse.button` are documented as different questions | One is the physical button now, the other is which input a wait last read. They disagree the moment a button is released, and the difference was true in the code but written down nowhere |
+| 2026-08-14 | `Framebuffer` is the named boundary a faster renderer would replace | Writing down the contract -- BGRA, top-down, clipped, exactly these methods -- is what makes a future Rust implementation a swap rather than a redesign. No measurement has been taken, so no optimisation has been made |
 | 2026-08-12 | The scene is cleared when a run finishes | The objects belonged to that run. Leaving them would make a second `run()` inherit the first game's scene and collide on every name; anything created before a run still takes part in it |
 | 2026-08-12 | One conformance suite runs the same contract assertions against every backend | A platform abstraction is only real if the layers above cannot tell which backend is underneath. Backends that cannot run on the current machine are skipped, never mocked -- a fake window server would agree with a wrong implementation |
 | 2026-08-12 | Tutorial code may use the public API only | No `trjoludus.platform`, no `ctypes`, no private internals. A lesson that cannot be written without reaching past the public API is evidence the public API is unfinished, and the fix belongs in the engine. `examples/window_test.py` currently breaks this rule out of necessity and is therefore classified as an engine smoke test, to be replaced by a real first lesson once backend selection exists |
 
 ---
 
-## 10. Milestone 1 build order
+## 10. Build order
 
 Each step is independently testable. Steps 1-3 prove the loop, timing and
 lifecycle with **zero platform code**, so when the X11 backend lands, any bug is
@@ -495,3 +552,77 @@ unambiguously in the backend.
 | 5 | X11 wired into the real loop | manual: window opens, closes cleanly, `dt` sane |
 | 6 | Win32 backend to the same contract | **needs a Windows machine** |
 | 7 | Resize events and `dt` clamping on both | manual and unit |
+
+Milestone 2 built the engine on top of that loop, one step at a time, each one
+tested before the next began:
+
+| # | Step | Verified by |
+| --- | --- | --- |
+| 1 | Game objects and image rendering | unit tests on the framebuffer; X11 pixel readback |
+| 2 | Movement | unit tests; rendered position checked |
+| 3 | Keyboard input and `destroy()` | unit tests; real X11 key events |
+| 4 | UI drawing: lines, rectangles, text | pixel-level unit tests; X11 readback |
+| 5 | Mouse input | unit tests; real X11 button events |
+| 6 | UI interaction: hover, click, scale | unit tests; X11 readback of a hovered button |
+| 7 | Dynamic drawings | pixel-count unit tests; X11 readback of changed text and colour |
+| -- | Polish: lifecycle, position API, PNG hardening | unit tests; X11 readback |
+
+---
+
+## 11. The renderer boundary
+
+The renderer is pure Python and touches every pixel through the interpreter.
+That is fine for what has been built and has not been optimised, because
+nothing has been measured. This section exists so that a future faster
+implementation -- in Rust, in C, or in Python that has been profiled -- knows
+exactly what it must replace and what it must not touch.
+
+**The boundary is `Framebuffer`.** Everything above it deals in objects,
+drawings and positions; everything below it deals in bytes.
+
+```
+scene / ui         "there is a button at (20, 20), 60 by 40, blue"
+     |
+     |  render(framebuffer)             <-- above here: what to draw
+     v
+Framebuffer        set_pixel, fill_rect, draw_line, draw_text, draw_image
+     |
+     |  present(pixels, width, height)  <-- below here: how to show it
+     v
+backend            XPutImage / StretchDIBits
+```
+
+`Framebuffer` is the only thing that writes pixels, and it is
+platform-neutral: it knows nothing about X11 or Win32, and the backends know
+nothing about game objects. Its whole contract is:
+
+| Member | Contract |
+| --- | --- |
+| `pixels` | a `bytearray`, `width * height * 4` bytes, **BGRA**, row-major, top row first |
+| `width`, `height` | the size in pixels |
+| `resize(w, h)` | change the size; contents undefined afterwards |
+| `clear()` | fill with `DEFAULT_CLEAR_COLOUR`, opaque |
+| `set_pixel`, `fill_rect`, `draw_line`, `draw_text`, `draw_image` | draw, clipped to the buffer, never raising for out-of-range coordinates |
+
+**A replacement implementation has to keep three promises**, all of which are
+already tested:
+
+1. **BGRA, tightly packed, top-down.** This is not an internal choice: it is
+   what X11's `ZPixmap` wants on little-endian TrueColor *and* what a 32-bit
+   Windows DIB wants, which is what makes presenting a frame a `memcpy`
+   instead of a conversion. Changing it means changing both backends.
+2. **The same pixels.** `tests/test_rendering.py` and `tests/test_ui.py` assert
+   exact pixel values -- blending, clipping at all four edges, Bresenham lines,
+   the 5x7 font, scaled text tiling without gaps. Those tests are the
+   specification; a faster renderer has to pass them unchanged.
+3. **No leakage upwards.** Nothing above `Framebuffer` may learn what is
+   underneath it. `scene`, `ui` and `app` call the methods in the table above
+   and nothing else, so swapping the implementation cannot change a single
+   line of the public Python API.
+
+What is deliberately *not* promised: that `pixels` is a `bytearray` rather
+than any buffer of the right shape, that drawing happens on the calling
+thread, or that the buffer is reallocated on resize. Those are free to change.
+
+**Not now.** No Rust, no C, no rewrite -- and no optimisation until something
+has been measured and found too slow. This section is a map, not a plan.

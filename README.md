@@ -3,10 +3,13 @@
 A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
 written in Python and designed for Windows and Linux.
 
-> **Status: pre-alpha.** On Linux, `run()` opens a **real window**, draws
-> named image objects into it, moves them, destroys them, draws a simple user
-> interface and reads the keyboard and mouse. A Windows backend exists but is **not yet verified on
-> Windows**. Mouse, sound, collision and animation are not implemented yet.
+> **Status: pre-alpha.** On Linux, `run()` opens a **real window**, draws named
+> image objects into it, moves and destroys them, draws lines, rectangles and
+> text, changes any of it while the game runs, and reads the keyboard and
+> mouse -- including which drawing the pointer is over and which one was
+> clicked. Verified on Linux/X11. A Windows backend exists but is **not
+> verified on Windows**. Sound, collision, animation, saving and public
+> multi-window support are not implemented.
 
 ## Philosophy
 
@@ -207,16 +210,29 @@ change a value relative to what it is now. Only the properties that mean
 something for a drawing are there, so asking a rectangle for its text says so
 rather than doing nothing:
 
-| Drawing | `set.text` | `set.color` | `set.scale` | `add`/`remove.scale` | `move.x` / `move.y` |
-| --- | --- | --- | --- | --- | --- |
-| Text | yes | yes | yes | yes | yes |
-| Rectangle | no | yes | yes | yes | yes |
-| Line | no | yes | yes | yes | yes |
+| Drawing | `set.text` | `set.color` | `set.x` / `set.y` | `set.scale` | `add`/`remove.scale` | `move.x` / `move.y` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Text | yes | yes | yes | yes | yes | yes |
+| Rectangle | no | yes | yes | yes | yes | yes |
+| Line | no | yes | yes | yes | yes | yes |
 
-There is no `set.x()`: moving is spelled `move`, the same as it is for game
-objects. Changes show up in what the mouse finds as well as in what is drawn,
-so a button that has moved, grown or changed its words is hovered and clicked
-where it is now.
+Position works the same way everywhere:
+
+```python
+button.set.x(200)     # exactly 200 pixels from the left
+button.move.x(25)     # and now 25 pixels further right
+```
+
+`set.x` and `set.y` place a drawing **absolutely**; `move.x` and `move.y`
+change it **relative** to where it is now, so calls add up. There is no
+`add.x` or `remove.x` -- relative movement already has a word, and it is
+`move`. Setting a line's position moves the whole line, so it keeps the shape
+it was drawn with.
+
+Changes show up in what the mouse finds as well as in what is drawn: there is
+one copy of a drawing's position and size, and drawing and hit-testing both
+read it. A button that has moved, grown or changed its words is hovered and
+clicked where it is now.
 
 See [`examples/button_test.py`](examples/button_test.py).
 
@@ -278,6 +294,31 @@ Moving the mouse does not end a wait -- only a button does. Afterwards
 `mouse.x` and `mouse.y` report where that click happened. The buttons are
 `"LEFT"`, `"RIGHT"` and `"MIDDLE"`; the scroll wheel is not reported yet.
 
+#### `pressed()` and `button` are different questions
+
+```python
+mouse.pressed("LEFT")   # is the left button down *right now*?
+mouse.button            # which button did the last wait read?
+```
+
+`pressed()` follows the physical button: true from the moment it goes down
+until it comes up, true on every frame in between, and reading it does not use
+it up. Use it for holding -- dragging something, charging a shot.
+
+`button` names the last mouse input that was **read** by a wait. It does not
+change until the next one is read, so it still says `"LEFT"` long after the
+left button came back up, and it is `None` until something has been read.
+
+```python
+mouse.wait(input.mouse)     # the player clicks and releases
+
+mouse.button                # "LEFT"  -- what was read
+mouse.pressed("LEFT")       # False   -- it is not held any more
+```
+
+For "was this drawing clicked this frame", neither is the tool: ask the
+drawing, with `button.mouse.clicked()`.
+
 ### Waiting for either
 
 ```python
@@ -317,14 +358,19 @@ There are two ways to change where an object is, and they mean different
 things:
 
 ```python
-player.x = 250       # put it exactly there
+player.set.x(250)    # put it exactly there
 player.move.x(50)    # and now 50 pixels further right
 ```
 
-Assigning `x` or `y` sets an **absolute** position. `move.x` and `move.y`
-change it **relative** to wherever the object is now, so calls add up: two
+`set.x` and `set.y` set an **absolute** position. `move.x` and `move.y` change
+it **relative** to wherever the object is now, so calls add up: two
 `move.x(50)` calls move it 100 pixels in total. Negative values move left and
 up. Nothing is clamped -- an object may be moved off screen.
+
+This is the same spelling drawings use, so one way of saying "put this here"
+works on everything with a position. Assigning `player.x = 250` does the same
+thing and still works; `set.x` is the spelling that reads the same next to
+`move.x`.
 
 ### Running without a window
 
@@ -342,9 +388,12 @@ TRJOLUDUS_BACKEND=null python examples/window_test.py
 | `win32` | real windows through user32 |
 | `null` | headless; no window, no close events |
 
-> **Milestone 1 caveat.** The Windows backend is implemented but has not been
-> run on Windows yet -- TrjoLudus is developed on Linux. Treat it as untested
-> until someone exercises it on a real Windows machine.
+> **Windows is unverified.** The Win32 backend is implemented and its
+> structure is tested on Linux -- signatures, types, the window procedure's
+> shape -- but nothing here has ever opened a window on Windows. Those tests
+> check that the code is *consistent*, not that it *works*; only running it on
+> a real Windows machine can show that. Linux/X11 is verified: the tests open
+> real windows and read their pixels back from the X server.
 
 ## Learning TrjoLudus
 
@@ -379,15 +428,30 @@ considered much later.
 | --- | --- | --- |
 | 0 | Project foundation, platform detection | done |
 | 1 | Window creation + game loop | done (Linux; Windows unverified) |
-| 2 | Keyboard and mouse input | planned |
-| 3 | 2D shape rendering | planned |
-| 4 | Images / textures | planned |
-| 5 | Text rendering | planned |
-| 6 | Animation | planned |
-| 7 | Collision | planned |
-| 8 | UI | planned |
-| 9 | Asset management | planned |
-| 10 | Save systems | planned |
+| 2 | Core engine: objects, drawing, input, interaction | done (Linux; Windows unverified) |
+| 3 | Animation | planned |
+| 4 | Collision | planned |
+| 5 | Audio | planned |
+| 6 | Asset management | planned |
+| 7 | Save systems | planned |
+| 8 | Camera / viewport | planned |
+| 9 | Public multi-window support | planned |
+
+Milestone 2 was built in seven steps, each tested before the next began:
+
+| Step | Scope |
+| --- | --- |
+| 1 | Game objects and image rendering (`create.image`, the scene, PNG loading) |
+| 2 | Movement (`move.x`, `move.y`) |
+| 3 | Keyboard input and `destroy()` |
+| 4 | UI drawing: colours, lines, rectangles, text, drawing lists |
+| 5 | Mouse input: position, held buttons, `mouse.wait()` |
+| 6 | UI interaction: `hover()`, `clicked()`, scale, draw order |
+| 7 | Dynamic drawings: changing text, colour, position and scale in place |
+
+**Not implemented, and deliberately not started:** sliders, text input,
+drag-and-drop, layout systems, animation, collision, audio, saving, cameras,
+public multi-window support, and any Rust or C++ component.
 
 ## License
 

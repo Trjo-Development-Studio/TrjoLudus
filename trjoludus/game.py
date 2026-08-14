@@ -98,9 +98,26 @@ class Game:
 
         The current frame finishes first: any events already dispatched are
         still delivered, but :meth:`on_update` is not called again. Calling it
-        more than once, or before the loop starts, is harmless -- the request
-        is a flag, not a queue.
+        more than once is harmless -- the request is a flag, not a queue.
+
+        The request belongs to the run it was made in. Calling this *before* a
+        run starts does nothing, because the run clears the request as it
+        begins; a game asks to stop from inside the run it wants to stop.
 
         Sets :attr:`quit_requested`, which is how the application observes it.
         """
         self._quit_requested = True
+
+    def _begin_run(self) -> None:
+        """Clear the stop request, called by the application as a run begins.
+
+        A stop request is about one run. Without this, a game instance that
+        quit could never be run again: the flag it set the first time would
+        still be true, and the second run would stop before its first frame.
+
+        Cleared as the run begins rather than as it ends, so the answer stays
+        readable afterwards -- a caller can still tell a game that asked to
+        stop from one whose window went away. It runs before
+        :meth:`on_start`, so a game that quits from there is still heard.
+        """
+        self._quit_requested = False

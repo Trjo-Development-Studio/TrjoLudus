@@ -330,13 +330,14 @@ class TestMoving(DrawingTestCase):
             box.move.x(1.5)
         self.assertEqual(box.position, (0, 0))
 
-    def test_there_is_no_set_x(self):
+    def test_position_cannot_be_added_to_or_removed_from(self):
         box = draw.list("hud").rect(0, 0, 4, 4, color.blue)
-        for namespace, name in ((box.set, "set"), (box.add, "add"),
-                                (box.remove, "remove")):
+        for namespace, name in ((box.add, "add"), (box.remove, "remove")):
             for attribute in ("x", "y", "position"):
                 with self.subTest(namespace=name, attribute=attribute):
                     self.assertFalse(hasattr(namespace, attribute))
+        # Relative movement has a word already, and it is not "add".
+        self.assertFalse(hasattr(box.set, "position"))
 
 
 class TestUnsupportedProperties(DrawingTestCase):
@@ -353,16 +354,16 @@ class TestUnsupportedProperties(DrawingTestCase):
     def test_what_set_offers(self):
         box = draw.list("hud").rect(0, 0, 4, 4, color.blue)
         offered = {name for name in dir(box.set) if not name.startswith("_")}
-        self.assertEqual(offered, {"scale", "color", "text"})
+        self.assertEqual(offered, {"x", "y", "scale", "color", "text"})
 
     def test_each_kind_lists_what_it_has(self):
         menu = draw.list("hud")
         self.assertEqual(menu.rect(0, 0, 4, 4, color.blue).PROPERTIES["rect"],
-                         ("color", "scale"))
+                         ("x", "y", "color", "scale"))
         self.assertEqual(menu.line(0, 0, 4, 4, color.blue).PROPERTIES["line"],
-                         ("color", "scale"))
+                         ("x", "y", "color", "scale"))
         self.assertEqual(menu.text(0, 0, "a", color.blue).PROPERTIES["text"],
-                         ("text", "color", "scale"))
+                         ("x", "y", "text", "color", "scale"))
 
     def test_the_error_says_what_to_use_instead(self):
         line = draw.list("hud").line(0, 0, 4, 4, color.blue)

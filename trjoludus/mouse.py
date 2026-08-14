@@ -14,6 +14,31 @@ the current answer. A button going down is an *input*: it happens once, and
 :func:`wait` hands each one out exactly once, the same way
 :func:`trjoludus.keyboard.wait` does with keys.
 
+**:func:`pressed` and :data:`button` answer different questions.**
+
+``mouse.pressed("LEFT")`` asks *is the left button down right now*. It follows
+the physical button: true from the moment it goes down until it comes up, true
+on every frame in between, and false again afterwards. Nothing consumes it, so
+two calls in the same frame give the same answer.
+
+``mouse.button`` says *which button the last mouse input that was read was*.
+It is set by :func:`wait` (and by :func:`trjoludus.input.wait` when a click is
+what arrived), and it does not change until the next one is read. It is
+``None`` until something has been read, and it stays at its last value long
+after that button came back up.
+
+So they disagree exactly when you would expect them to::
+
+    mouse.wait(input.mouse)     # player clicks the left button and releases
+
+    mouse.button                # "LEFT"  -- what was read
+    mouse.pressed("LEFT")       # False   -- it is not held any more
+
+Use :func:`pressed` for "while the button is down" -- dragging, holding to
+charge a shot. Use :data:`button` after a wait, to ask which button ended it.
+For "was this drawing clicked this frame", neither is the tool: ask the
+drawing, with ``button.mouse.clicked()``.
+
 That split is why moving the mouse does not end a :func:`wait`. Movement is
 continuous -- waiting on it would return the instant anyone nudged the mouse,
 which is never what "wait for input" means.
@@ -69,7 +94,10 @@ class MouseState:
         self.x = 0
         self.y = 0
         self.held: set[str] = set()
-        #: The button most recently reported by :func:`wait`.
+        #: Which button the most recently read mouse input was. Set when a
+        #: wait hands a press out, and left alone until the next one -- so it
+        #: still names a button long after that button came back up.
+        #: ``None`` until a press has been read.
         self.button: str | None = None
 
     @property
@@ -78,7 +106,13 @@ class MouseState:
         return (self.x, self.y)
 
     def pressed(self, name: str) -> bool:
-        """Whether a button is held down in this window."""
+        """Whether a button is held down in this window right now.
+
+        Current state, not a record of an event: it becomes true when the
+        button goes down and false when it comes up, and reading it does not
+        use it up. :attr:`button` is the other question -- which button the
+        last input that was *read* was.
+        """
         return name in self.held
 
     def moved(self, x: int, y: int) -> None:
@@ -157,6 +191,11 @@ def _check_button(name: str) -> str:
 
 def pressed(name: str) -> bool:
     """Whether a mouse button is held down right now.
+
+    True for as long as the button is physically down, on every frame in
+    between, and reading it does not consume anything. This is the question to
+    ask while something is being held; :data:`button` is the question to ask
+    after a :func:`wait` about which button ended it.
 
     Args:
         name: ``"LEFT"``, ``"RIGHT"`` or ``"MIDDLE"``.

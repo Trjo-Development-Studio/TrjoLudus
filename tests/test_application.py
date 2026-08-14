@@ -328,12 +328,18 @@ class TestQuitSeam(unittest.TestCase):
 
 
 class TestQuitTiming(unittest.TestCase):
-    def test_quit_before_run_skips_every_frame(self):
+    def test_quit_before_the_run_starts_is_cleared_by_it(self):
+        """A stop request is about one run, so it cannot arrive before one.
+
+        This is what lets a game instance be run twice: the run clears the
+        request as it begins. A game asks to stop from inside the run it
+        wants to stop -- from on_start at the earliest.
+        """
         game = RecordingGame(quit_after=5)
         game.quit()
+        self.assertTrue(game.quit_requested)
         run_app(game)
-        self.assertEqual(game.frames, 0)
-        self.assertEqual(game.calls, ["on_start", "on_stop"])
+        self.assertEqual(game.frames, 5)
 
     def test_quit_during_on_start_skips_every_frame(self):
         class QuittingEarly(RecordingGame):

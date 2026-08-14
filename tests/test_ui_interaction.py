@@ -236,13 +236,15 @@ class TestScale(InteractionTestCase):
             button.remove.scale(1.0)
         self.assertEqual(button.scale, 1.0)
 
-    def test_there_is_no_set_x(self):
-        """Position keeps the API it already has."""
+    def test_position_is_absolute_or_relative_and_nothing_else(self):
+        """set puts it somewhere, move nudges it; add and remove do neither."""
         button = draw.list("m").rect(0, 0, 10, 10, color.blue)
-        for namespace in (button.set, button.add, button.remove):
-            with self.subTest():
-                self.assertFalse(hasattr(namespace, "x"))
-                self.assertFalse(hasattr(namespace, "y"))
+        for attribute in ("x", "y"):
+            with self.subTest(attribute=attribute):
+                self.assertTrue(hasattr(button.set, attribute))
+                self.assertTrue(hasattr(button.move, attribute))
+                self.assertFalse(hasattr(button.add, attribute))
+                self.assertFalse(hasattr(button.remove, attribute))
 
 
 class TestClick(InteractionTestCase):

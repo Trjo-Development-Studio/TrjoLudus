@@ -75,6 +75,20 @@ class _Setter:
     def __init__(self, drawable: "Drawable") -> None:
         self._drawable = drawable
 
+    def x(self, pixels: int) -> "Drawable":
+        """Put the drawing's left edge exactly ``pixels`` from the left."""
+        drawable = self._drawable
+        drawable._live()
+        drawable._shift_x(_whole_number(pixels, "x") - drawable._x)
+        return drawable
+
+    def y(self, pixels: int) -> "Drawable":
+        """Put the drawing's top edge exactly ``pixels`` from the top."""
+        drawable = self._drawable
+        drawable._live()
+        drawable._shift_y(_whole_number(pixels, "y") - drawable._y)
+        return drawable
+
     def scale(self, amount) -> "Drawable":
         """Set how much bigger than normal the drawing is. 1 is normal."""
         drawable = self._drawable
@@ -86,7 +100,7 @@ class _Setter:
         """Change what colour the drawing is."""
         drawable = self._drawable
         drawable._live()
-        drawable.colour = color_module.check(value, "a colour")
+        drawable._colour = color_module.check(value, "a colour")
         return drawable
 
     def text(self, message: str) -> "Drawable":
@@ -103,7 +117,7 @@ class _Setter:
             raise TypeError(
                 f"text must be a string, got {type(message).__name__}"
             )
-        drawable.message = message
+        drawable._message = message
         return drawable
 
     def __repr__(self) -> str:
@@ -157,20 +171,14 @@ class _DrawingMovement:
         """Move right by ``pixels``, or left if negative."""
         drawable = self._drawable
         drawable._live()
-        amount = _whole_number(pixels, "a movement distance")
-        drawable.x += amount
-        if drawable.kind == "line":
-            drawable.end_x += amount
+        drawable._shift_x(_whole_number(pixels, "a movement distance"))
         return drawable
 
     def y(self, pixels: int) -> "Drawable":
         """Move down by ``pixels``, or up if negative."""
         drawable = self._drawable
         drawable._live()
-        amount = _whole_number(pixels, "a movement distance")
-        drawable.y += amount
-        if drawable.kind == "line":
-            drawable.end_y += amount
+        drawable._shift_y(_whole_number(pixels, "a movement distance"))
         return drawable
 
     def __repr__(self) -> str:
@@ -254,29 +262,30 @@ class Drawable:
     both read it.
     """
 
-    __slots__ = ("kind", "x", "y", "end_x", "end_y", "width", "height",
-                 "message", "colour", "_scale", "_visible", "_list",
-                 "_removed", "_mouse", "set", "add", "remove", "move")
+    __slots__ = ("_kind", "_x", "_y", "_end_x", "_end_y", "_width",
+                 "_height", "_message", "_colour", "_scale", "_visible",
+                 "_list", "_removed", "_mouse", "set", "add", "remove",
+                 "move")
 
     #: Which properties each kind of drawing has, for error messages.
     PROPERTIES = {
-        "line": ("color", "scale"),
-        "rect": ("color", "scale"),
-        "text": ("text", "color", "scale"),
+        "line": ("x", "y", "color", "scale"),
+        "rect": ("x", "y", "color", "scale"),
+        "text": ("x", "y", "text", "color", "scale"),
     }
 
     def __init__(self, kind: str, colour: tuple, owner: "DrawList", *,
                  x: int = 0, y: int = 0, end_x: int = 0, end_y: int = 0,
                  width: int = 0, height: int = 0, message: str = "") -> None:
-        self.kind = kind
-        self.x = x
-        self.y = y
-        self.end_x = end_x
-        self.end_y = end_y
-        self.width = width
-        self.height = height
-        self.message = message
-        self.colour = colour
+        self._kind = kind
+        self._x = x
+        self._y = y
+        self._end_x = end_x
+        self._end_y = end_y
+        self._width = width
+        self._height = height
+        self._message = message
+        self._colour = colour
         self._scale = 1.0
         self._visible = True
         self._list = owner
@@ -288,6 +297,56 @@ class Drawable:
         self.move = _DrawingMovement(self)
 
     # --- state ------------------------------------------------------------
+
+    @property
+    def kind(self) -> str:
+        """What this is: ``"line"``, ``"rect"`` or ``"text"``."""
+        return self._kind
+
+    @property
+    def x(self) -> int:
+        """Distance in pixels from the left edge of the window.
+
+        Read-only. ``set.x()`` puts it somewhere exact and ``move.x()`` nudges
+        it, so every change goes through a check -- there is no way to write a
+        float or a bool straight into a position.
+        """
+        return self._x
+
+    @property
+    def y(self) -> int:
+        """Distance in pixels from the top edge of the window."""
+        return self._y
+
+    @property
+    def end_x(self) -> int:
+        """Where a line ends, in pixels from the left edge."""
+        return self._end_x
+
+    @property
+    def end_y(self) -> int:
+        """Where a line ends, in pixels from the top edge."""
+        return self._end_y
+
+    @property
+    def width(self) -> int:
+        """A rectangle's width before scaling. :attr:`bounds` has the rest."""
+        return self._width
+
+    @property
+    def height(self) -> int:
+        """A rectangle's height before scaling."""
+        return self._height
+
+    @property
+    def message(self) -> str:
+        """The words a text drawing shows."""
+        return self._message
+
+    @property
+    def colour(self) -> tuple[int, int, int]:
+        """The colour this is drawn in."""
+        return self._colour
 
     @property
     def mouse(self) -> DrawableMouse:
@@ -331,6 +390,22 @@ class Drawable:
         self._visible = False
         return self
 
+    def _shift_x(self, amount: int) -> None:
+        """Move by a relative amount, which is how every change of x happens.
+
+        A line moves as a whole: both ends shift together, so putting one
+        somewhere exact keeps the shape it was drawn with.
+        """
+        self._x += amount
+        if self._kind == "line":
+            self._end_x += amount
+
+    def _shift_y(self, amount: int) -> None:
+        """Move by a relative amount: every change of y goes through here."""
+        self._y += amount
+        if self._kind == "line":
+            self._end_y += amount
+
     def _live(self) -> None:
         if self._removed or self._list._destroyed:
             raise UiError(
@@ -371,24 +446,24 @@ class Drawable:
         never moves the corner a game placed.
         """
         scale = self._scale
-        if self.kind == "rect":
-            return (self.x, self.y,
-                    self.x + round(self.width * scale),
-                    self.y + round(self.height * scale))
-        if self.kind == "text":
-            width, height = font.measure(self.message)
-            return (self.x, self.y,
-                    self.x + round(width * scale),
-                    self.y + round(height * scale))
+        if self._kind == "rect":
+            return (self._x, self._y,
+                    self._x + round(self._width * scale),
+                    self._y + round(self._height * scale))
+        if self._kind == "text":
+            width, height = font.measure(self._message)
+            return (self._x, self._y,
+                    self._x + round(width * scale),
+                    self._y + round(height * scale))
         x, y, end_x, end_y = self._scaled_line()
         return (min(x, end_x), min(y, end_y), max(x, end_x) + 1,
                 max(y, end_y) + 1)
 
     def _scaled_line(self) -> tuple[int, int, int, int]:
         scale = self._scale
-        return (self.x, self.y,
-                self.x + round((self.end_x - self.x) * scale),
-                self.y + round((self.end_y - self.y) * scale))
+        return (self._x, self._y,
+                self._x + round((self._end_x - self._x) * scale),
+                self._y + round((self._end_y - self._y) * scale))
 
     def contains(self, x: int, y: int) -> bool:
         """Whether a point falls inside this drawing's area."""
@@ -403,19 +478,20 @@ class Drawable:
             return
         scale = self._scale
 
-        if self.kind == "line":
-            framebuffer.draw_line(*self._scaled_line(), self.colour)
+        if self._kind == "line":
+            framebuffer.draw_line(*self._scaled_line(), self._colour)
             return
 
-        if self.kind == "rect":
-            framebuffer.fill_rect(self.x, self.y, round(self.width * scale),
-                                  round(self.height * scale), self.colour)
+        if self._kind == "rect":
+            framebuffer.fill_rect(self._x, self._y, round(self._width * scale),
+                                  round(self._height * scale), self._colour)
             return
 
         if scale == 1.0:
-            framebuffer.draw_text(self.message, self.x, self.y, self.colour)
+            framebuffer.draw_text(self._message, self._x, self._y,
+                                  self._colour)
             return
-        self._render_scaled_text(framebuffer, self.message, self.x, self.y,
+        self._render_scaled_text(framebuffer, self._message, self._x, self._y,
                                  scale)
 
     def _render_scaled_text(self, framebuffer, text, x, y, scale) -> None:
@@ -437,13 +513,13 @@ class Drawable:
                     right = x + round((pen + column + 1) * scale)
                     bottom = y + round((row + 1) * scale)
                     framebuffer.fill_rect(left, top, max(1, right - left),
-                                          max(1, bottom - top), self.colour)
+                                          max(1, bottom - top), self._colour)
             pen += font.CHARACTER_WIDTH + font.SPACING
 
     def __repr__(self) -> str:
-        what = self.message if self.kind == "text" else ""
+        what = self._message if self._kind == "text" else ""
         detail = f" {what!r}" if what else ""
-        return (f"Drawable({self.kind!r} at ({self.x}, {self.y}), "
+        return (f"Drawable({self._kind!r} at ({self._x}, {self._y}), "
                 f"scale={self._scale}{detail})")
 
 

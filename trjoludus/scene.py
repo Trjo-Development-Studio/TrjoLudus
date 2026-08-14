@@ -23,6 +23,7 @@ from trjoludus.errors import TrjoLudusError
 __all__ = [
     "GameObject",
     "Movement",
+    "Placement",
     "Scene",
     "SceneError",
     "SceneObject",
@@ -173,6 +174,47 @@ def _check_pixels(label: str, value) -> int:
     return value
 
 
+class Placement:
+    """Puts one object at an exact place.
+
+    Reached as :attr:`GameObject.set`::
+
+        player.set.x(200)    # exactly 200 pixels from the left
+        player.set.y(100)    # exactly 100 pixels from the top
+
+    The same spelling drawings use, so one way of saying "put this here"
+    works on everything that has a position. Assigning :attr:`GameObject.x`
+    does the same thing and stays supported; ``set`` is the spelling that
+    reads the same next to ``move``.
+    """
+
+    __slots__ = ("_owner",)
+
+    def __init__(self, owner: "GameObject") -> None:
+        self._owner = owner
+
+    def x(self, pixels: int) -> None:
+        """Put the object's left edge exactly ``pixels`` from the left.
+
+        Raises:
+            TypeError: If ``pixels`` is not a whole number.
+            SceneError: If the object has been removed.
+        """
+        self._owner._live().x = _check_pixels("x", pixels)
+
+    def y(self, pixels: int) -> None:
+        """Put the object's top edge exactly ``pixels`` from the top.
+
+        Raises:
+            TypeError: If ``pixels`` is not a whole number.
+            SceneError: If the object has been removed.
+        """
+        self._owner._live().y = _check_pixels("y", pixels)
+
+    def __repr__(self) -> str:
+        return f"Placement({self._owner.name!r})"
+
+
 class Movement:
     """Moves one object relative to where it currently is.
 
@@ -184,8 +226,8 @@ class Movement:
         player.move.y(-50)   # 50 pixels up
 
     Every call is relative, so they add up: two ``move.x(50)`` calls move the
-    object 100 pixels in total. To put an object at an exact place, assign to
-    :attr:`GameObject.x` or :attr:`GameObject.y` instead.
+    object 100 pixels in total. To put an object at an exact place, use
+    ``set.x()`` and ``set.y()``, or assign to :attr:`GameObject.x`.
 
     Nothing is clamped. An object may be moved partly or wholly outside the
     window; there is no world boundary, and inventing one here would surprise
@@ -269,6 +311,14 @@ class GameObject:
                 f"with create.image(...); destroying is permanent."
             )
         return self._object
+
+    @property
+    def set(self) -> Placement:
+        """Put this object at an exact position::
+
+            player.set.x(200)
+        """
+        return Placement(self)
 
     @property
     def move(self) -> Movement:

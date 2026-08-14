@@ -213,6 +213,9 @@ class Application:
             width, height = self._size
             window = self._backend.create_window(self._title, width, height)
             self._window = window
+            # A stop request belongs to one run. Clearing it here is what lets
+            # the same game instance be run again after it quit.
+            self._game._begin_run()
             self._game.on_start()
             started = True
             # Show what on_start built before running a single frame. The loop

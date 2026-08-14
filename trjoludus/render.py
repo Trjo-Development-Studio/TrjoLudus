@@ -10,6 +10,22 @@ Win32, and the backends know nothing about game objects -- they are handed
 pixels and asked to show them.
 
 Pixels are BGRA, matching :mod:`trjoludus.image`; see that module for why.
+
+**This module is the engine's rendering boundary.** Everything above it deals
+in objects, drawings and positions; everything below it deals in bytes. That
+makes it the one piece a faster implementation would replace -- in Rust, in C,
+or in Python that has actually been profiled -- without changing a line of the
+public API, because nothing above it knows what is underneath.
+
+A replacement has to keep three promises: pixels stay BGRA, tightly packed,
+top row first (that is what makes presenting a frame a memcpy on both X11 and
+Windows rather than a conversion); the drawing methods keep producing exactly
+the same pixels, which ``tests/test_rendering.py`` and ``tests/test_ui.py``
+pin down value by value; and nothing above this module learns what changed.
+``ARCHITECTURE.md`` section 11 writes the contract out in full.
+
+Nothing here has been optimised, because nothing has been measured. It is fast
+enough for what has been built.
 """
 
 from trjoludus import font

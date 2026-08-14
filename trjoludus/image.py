@@ -117,11 +117,36 @@ def load_image(path) -> Image:
         raise ImageError(f"{file}: {exc}") from None
 
 
+#: The largest a chunk may claim to be. PNG stores lengths in four bytes but
+#: reserves the top bit, so anything above this is a broken file rather than a
+#: big one -- and reading the length before trusting it is what stops a
+#: corrupt number from being used as a slice.
+_MAX_CHUNK = 0x7FFFFFFF
+
+
+def _name(kind: bytes) -> str:
+    """A chunk type as something readable, even when it is garbage."""
+    try:
+        return kind.decode("ascii")
+    except UnicodeDecodeError:
+        return repr(kind)
+
+
 def decode_png(data: bytes) -> Image:
     """Decode PNG bytes into an :class:`Image`.
 
+    Only what a game needs is supported: 8 bits per channel, no interlacing.
+    Everything else is refused with a message saying how to re-save the file.
+
+    Malformed input is refused rather than guessed at. Each chunk has to fit
+    inside the file, claim a believable length, and match its own checksum,
+    and the file has to start with IHDR and reach IEND. A file that fails any
+    of those raises :class:`ImageError` instead of decoding whatever bytes
+    happened to follow.
+
     Raises:
-        ImageError: If the data is not a PNG this decoder supports.
+        ImageError: If the data is not a PNG this decoder supports, or is
+            damaged.
     """
     if not data.startswith(PNG_SIGNATURE):
         raise ImageError(
@@ -135,11 +160,52 @@ def decode_png(data: bytes) -> Image:
     compressed = bytearray()
 
     offset = len(PNG_SIGNATURE)
-    while offset + 8 <= len(data):
+    ended = False
+    while not ended:
+        # A chunk is a 4-byte length, a 4-byte type, the body, and a 4-byte
+        # checksum. Anything less than a whole chunk is a truncated file, and
+        # saying so beats decoding whatever happens to be there.
+        left = len(data) - offset
+        if left < 12:
+            raise ImageError(
+                f"PNG is truncated: {left} bytes left where a chunk should "
+                f"start, and no IEND chunk was reached."
+            )
+
         length = int.from_bytes(data[offset:offset + 4], "big")
         kind = data[offset + 4:offset + 8]
+        if length > _MAX_CHUNK:
+            raise ImageError(
+                f"PNG chunk {_name(kind)} claims to be {length} bytes, which "
+                f"is not a valid chunk length."
+            )
+        if not kind.isalpha():
+            raise ImageError(
+                f"PNG is malformed: expected a chunk type at byte {offset}, "
+                f"found {kind!r}."
+            )
+
+        end = offset + 12 + length  # length + type + body + CRC
+        if end > len(data):
+            raise ImageError(
+                f"PNG chunk {_name(kind)} runs past the end of the file: it "
+                f"needs {end} bytes but the file has {len(data)}."
+            )
+
         body = data[offset + 8:offset + 8 + length]
-        offset += 12 + length  # length + type + body + CRC
+        stored = int.from_bytes(data[offset + 8 + length:end], "big")
+        if zlib.crc32(kind + body) & 0xFFFFFFFF != stored:
+            raise ImageError(
+                f"PNG chunk {_name(kind)} is corrupt: its checksum does not "
+                f"match its contents."
+            )
+        offset = end
+
+        if header is None and kind != b"IHDR":
+            raise ImageError(
+                f"PNG does not start with an IHDR chunk (found "
+                f"{_name(kind)}), so its size and colour type are unknown."
+            )
 
         if kind == b"IHDR":
             header = _read_header(body)
@@ -150,7 +216,7 @@ def decode_png(data: bytes) -> Image:
         elif kind == b"IDAT":
             compressed += body
         elif kind == b"IEND":
-            break
+            ended = True
 
     if header is None:
         raise ImageError("PNG has no IHDR chunk")
