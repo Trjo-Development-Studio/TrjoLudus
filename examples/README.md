@@ -61,12 +61,13 @@ the last.
 | --- | --- |
 | `window_test.py` | Opens a real window with `run()`. |
 | `image_test.py` | Creates a named image object and moves it. |
-| `keyboard_test.py` | Moves an object with W/A/S/D, quits on Escape. |
+| `keyboard_test.py` | Moves an object with W/A/S/D using the blocking wait. |
 | `mouse_test.py` | Follows the pointer and reacts to clicks. |
 | `ui_test.py` | Draws lines, rectangles and text into drawing lists. |
 | `button_test.py` | A button that grows on hover and counts clicks. |
 | `time_test.py` | Movement per frame against movement per second. |
 | `animation_test.py` | A block that walks while a mouse button is held. |
+| `keyboard_state_test.py` | WASD movement from held keys, animating as it goes. |
 | `assets/` | Images the examples use. |
 
 All of these use **only the public API**: `run()` picks the backend itself and

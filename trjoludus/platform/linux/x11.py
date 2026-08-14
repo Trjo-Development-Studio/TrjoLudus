@@ -25,6 +25,7 @@ from trjoludus.errors import PlatformError
 from trjoludus.events import (
     Event,
     KeyPressed,
+    KeyReleased,
     MouseButtonPressed,
     MouseButtonReleased,
     MouseMoved,
@@ -279,6 +280,19 @@ class X11Backend(PlatformBackend):
                 "To run without a window, set TRJOLUDUS_BACKEND=null."
             )
 
+        # Holding a key down makes X send a stream of KeyRelease/KeyPress
+        # pairs. Without this, a held key would look like it was being
+        # released and pressed many times a second, and held state would
+        # flicker. Detectable auto-repeat gives one KeyRelease at the real
+        # release instead. The reply says whether the server supports it; if
+        # it does not, presses still work and only held state is affected, so
+        # this is not worth refusing to start over.
+        supported = ctypes.c_int(0)
+        self._xlib.XkbSetDetectableAutoRepeat(
+            self._display, True, ctypes.byref(supported)
+        )
+        self._detectable_auto_repeat = bool(supported.value)
+
         self._screen = self._xlib.XDefaultScreen(self._display)
         self._root = self._xlib.XRootWindow(self._display, self._screen)
         self._windows: dict[int, X11Window] = {}
@@ -359,6 +373,7 @@ class X11Backend(PlatformBackend):
             window_id,
             _xlib.STRUCTURE_NOTIFY_MASK
             | _xlib.KEY_PRESS_MASK
+            | _xlib.KEY_RELEASE_MASK
             | _xlib.BUTTON_PRESS_MASK
             | _xlib.BUTTON_RELEASE_MASK
             | _xlib.POINTER_MOTION_MASK,
@@ -549,7 +564,7 @@ class X11Backend(PlatformBackend):
                 window._size = size
                 window._pending.append(WindowResized(size[0], size[1]))
 
-        elif event_type == _xlib.KEY_PRESS:
+        elif event_type in (_xlib.KEY_PRESS, _xlib.KEY_RELEASE):
             window = self._windows.get(event.xkey.window)
             if window is None:
                 return
@@ -559,7 +574,10 @@ class X11Backend(PlatformBackend):
             keysym = self._xlib.XLookupKeysym(ctypes.byref(event.xkey), 0)
             name = key_name(keysym)
             if name is not None:
-                window._pending.append(KeyPressed(name))
+                window._pending.append(
+                    KeyPressed(name) if event_type == _xlib.KEY_PRESS
+                    else KeyReleased(name)
+                )
 
         elif event_type == _xlib.MOTION_NOTIFY:
             window = self._windows.get(event.xmotion.window)

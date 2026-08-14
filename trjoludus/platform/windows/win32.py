@@ -26,6 +26,7 @@ from trjoludus.errors import PlatformError
 from trjoludus.events import (
     Event,
     KeyPressed,
+    KeyReleased,
     MouseButtonPressed,
     MouseButtonReleased,
     MouseMoved,
@@ -464,10 +465,15 @@ class Win32Backend(PlatformBackend):
                 )
                 return 0
 
-            if message in (_user32.WM_KEYDOWN, _user32.WM_SYSKEYDOWN):
+            if message in (_user32.WM_KEYDOWN, _user32.WM_SYSKEYDOWN,
+                           _user32.WM_KEYUP, _user32.WM_SYSKEYUP):
+                went_down = message in (_user32.WM_KEYDOWN,
+                                        _user32.WM_SYSKEYDOWN)
                 name = key_name(wparam)
                 if name is not None:
-                    window._pending.append(KeyPressed(name))
+                    window._pending.append(
+                        KeyPressed(name) if went_down else KeyReleased(name)
+                    )
                 # Still forwarded: DefWindowProcW turns key messages into
                 # system behaviour such as Alt opening the window menu.
                 return self._user32.DefWindowProcW(hwnd, message, wparam, lparam)

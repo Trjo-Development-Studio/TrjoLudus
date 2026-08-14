@@ -175,6 +175,16 @@ WM_CLOSE = 0x0010
 WM_KEYDOWN = 0x0100
 WM_SYSKEYDOWN = 0x0104
 
+#: Key came back up. The SYS variants arrive when Alt is involved, which is
+#: why both are handled: a key released while Alt is held sends WM_SYSKEYUP,
+#: and a game that only watched WM_KEYUP would think it was still held.
+#:
+#: Windows repeats WM_KEYDOWN while a key is held but sends WM_KEYUP only
+#: once, when it really comes up -- so held state needs nothing like X11's
+#: detectable auto-repeat here.
+WM_KEYUP = 0x0101
+WM_SYSKEYUP = 0x0105
+
 #: Pointer messages. Position arrives packed into lParam.
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201

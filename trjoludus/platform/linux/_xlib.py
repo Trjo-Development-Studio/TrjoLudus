@@ -64,6 +64,7 @@ Bool = c_int
 
 #: Event type codes (X11/X.h).
 KEY_PRESS = 2
+KEY_RELEASE = 3
 BUTTON_PRESS = 4
 BUTTON_RELEASE = 5
 MOTION_NOTIFY = 6
@@ -74,8 +75,12 @@ CLIENT_MESSAGE = 33
 #: Event mask selecting ConfigureNotify and DestroyNotify.
 STRUCTURE_NOTIFY_MASK = 1 << 17
 
-#: Event mask selecting KeyPress. Key *releases* are not selected: nothing
-#: reports them yet, and asking for events no one reads only costs round trips.
+#: Event mask selecting KeyRelease, so that a held key can be seen to stop
+#: being held. Selected alongside KeyPress rather than instead of it: state
+#: needs both edges, and the waiting calls still only answer to presses.
+KEY_RELEASE_MASK = 1 << 1
+
+#: Event mask selecting KeyPress.
 KEY_PRESS_MASK = 1 << 0
 
 #: Masks selecting the pointer. Button releases *are* selected, unlike key
@@ -375,6 +380,12 @@ FUNCTION_SIGNATURES: dict[str, tuple[list, object]] = {
     # keysym; index 0 is the unshifted meaning, which is what a canonical
     # key name should be.
     "XLookupKeysym": ([POINTER(XKeyEvent), c_int], c_ulong),
+    # Auto-repeat. Holding a key down makes the server send a stream of
+    # KeyRelease/KeyPress pairs, which would make a held key flicker between
+    # held and not held. Asking for *detectable* auto-repeat means one
+    # KeyRelease when the key really comes up, which is what held state needs.
+    # Part of the Xkb client API, which lives in libX11 itself.
+    "XkbSetDetectableAutoRepeat": ([Display, c_int, POINTER(c_int)], c_int),
     # Events.
     "XSelectInput": ([Display, Window, c_long], c_int),
     "XPending": ([Display], c_int),

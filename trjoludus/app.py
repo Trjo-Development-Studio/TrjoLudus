@@ -35,10 +35,12 @@ from trjoludus.platform import create_backend
 from trjoludus.platform.base import PlatformBackend
 from trjoludus.events import (
     KeyPressed,
+    KeyReleased,
     MouseButtonPressed,
     MouseButtonReleased,
     MouseMoved,
 )
+from trjoludus.keyboard import KeyboardState
 from trjoludus.mouse import MouseState
 from trjoludus.render import Framebuffer
 from trjoludus.scene import current_scene
@@ -150,6 +152,9 @@ class Application:
         # which input.wait() has to preserve.
         self._input: deque[PendingInput] = deque()
         self._mouse_states: dict[object, MouseState] = {}
+        # Which keys are held, per window. Kept up to date as key events
+        # arrive, so asking is a set lookup rather than a scan of anything.
+        self._key_states: dict[object, KeyboardState] = {}
         # Clicks that arrived during the current frame. UI asks about these
         # rather than taking them off the queue: "was I clicked" is a question
         # about what happened, not a wait that consumes the answer.
@@ -229,12 +234,20 @@ class Application:
             self._render(window)
             self._loop(window)
         finally:
+            from trjoludus import keyboard as _keyboard
             from trjoludus.keyboard import key as _key
 
             _running = previous
             self._window = None
             self._input.clear()
             self._mouse_states.clear()
+            # Nothing can still be held once the window is gone: there is no
+            # release coming for a window that no longer exists, so a key held
+            # at that moment would otherwise be held for good.
+            for keys in self._key_states.values():
+                keys.forget_everything()
+            self._key_states.clear()
+            _keyboard._reset()
             self._frame_clicks.clear()
             # Unread input belonged to this run, and so did the last key. A
             # second game must not start out holding the first one's press.
@@ -298,10 +311,19 @@ class Application:
         """
         window = self._window if window is None else window
         state = self.mouse_state(window)
+        keys = self.keyboard_state(window)
 
         for event in events:
             if isinstance(event, KeyPressed):
+                # Both: the press is input a wait can answer, *and* the key is
+                # now held. They are separate questions about the same event,
+                # so neither takes anything from the other.
+                keys.key_down(event.key)
                 self._input.append(PendingInput("key", event.key, window))
+            elif isinstance(event, KeyReleased):
+                # State only. A key coming up is the end of something rather
+                # than new input, so nothing waits for it.
+                keys.key_up(event.key)
             elif isinstance(event, MouseMoved):
                 state.moved(event.x, event.y)
             elif isinstance(event, MouseButtonPressed):
@@ -326,6 +348,21 @@ class Application:
         return tuple(
             click for click in self._frame_clicks if click.window is window
         )
+
+    def keyboard_state(self, window=None) -> KeyboardState:
+        """Which keys are held in one window, created on first use.
+
+        Per window because a key is held *in* a window: one that is not
+        focused is not receiving it. A game has one window today, so
+        ``keyboard.button`` reads this; several windows would each have their
+        own without the input system changing shape.
+        """
+        window = self._window if window is None else window
+        state = self._key_states.get(window)
+        if state is None:
+            state = KeyboardState()
+            self._key_states[window] = state
+        return state
 
     def mouse_state(self, window=None) -> MouseState:
         """The pointer state for one window, created on first use.

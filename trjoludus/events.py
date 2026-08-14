@@ -18,6 +18,7 @@ __all__ = [
     "Event",
     "KEY_NAMES",
     "KeyPressed",
+    "KeyReleased",
     "MOUSE_BUTTONS",
     "MouseButtonPressed",
     "MouseButtonReleased",
@@ -65,6 +66,22 @@ class WindowCloseRequested(Event):
 @dataclass(frozen=True, slots=True)
 class KeyPressed(Event):
     """A key went down.
+
+    Attributes:
+        key: One of :data:`KEY_NAMES`, e.g. ``"W"`` or ``"ESCAPE"``.
+    """
+
+    key: str
+
+
+@dataclass(frozen=True, slots=True)
+class KeyReleased(Event):
+    """A key came back up.
+
+    The other half of :class:`KeyPressed`, and what tells the engine a key is
+    no longer held. It is not queued for the waiting calls: waiting is for
+    input that happened, and a key coming up is the *end* of something rather
+    than a new thing to answer. It updates held state and nothing else.
 
     Attributes:
         key: One of :data:`KEY_NAMES`, e.g. ``"W"`` or ``"ESCAPE"``.

@@ -36,6 +36,7 @@ from trjoludus.errors import (
 from trjoludus.events import (
     Event,
     KeyPressed,
+    KeyReleased,
     MouseButtonPressed,
     MouseButtonReleased,
     MouseMoved,
@@ -83,6 +84,7 @@ __all__ = [
     # Events
     "Event",
     "KeyPressed",
+    "KeyReleased",
     "MouseMoved",
     "MouseButtonPressed",
     "MouseButtonReleased",

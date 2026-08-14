@@ -247,6 +247,37 @@ Text uses a small built-in font, so it needs no font files: printable ASCII at
 
 ### Keyboard input
 
+There are two different questions, and it is worth knowing which you are
+asking. **Is a key held down right now?**
+
+```python
+from trjoludus import keyboard, time
+
+if keyboard.button.pressed("W"):
+    player.animation.play("walk", fps=12)
+    player.move.y(-100 * time.delta)
+else:
+    player.set.image("idle.png")
+```
+
+`pressed()` is **held state**. It is true from the moment the key goes down
+until it comes back up, on every frame in between -- not "was it pressed this
+frame". Reading it consumes nothing, so ask about as many keys as you like, as
+often as you like:
+
+```python
+if keyboard.button.pressed("W"):
+    player.move.y(-100 * time.delta)
+if keyboard.button.pressed("D"):
+    player.move.x(100 * time.delta)
+```
+
+Both can be true at once, and letting go of one does not affect the other.
+`keyboard.button.released("W")` is the exact opposite -- also state, so it is
+true for a key nobody has touched, not only for one just let go of.
+
+**Or: wait until a key arrives.**
+
 ```python
 from trjoludus import input, key, keyboard
 
@@ -265,9 +296,17 @@ if key == "S":
 it never repeats the last key. Nothing else happens while waiting; no frame is
 drawn until a key arrives.
 
-Key names are uppercase and the same on every platform: `"W"` … `"Z"`, `"0"` …
-`"9"`, `"ESCAPE"`, `"ENTER"`, `"SPACE"`, `"UP"`, `"DOWN"`, `"LEFT"`, `"RIGHT"`.
-Keys outside that list are ignored rather than reported under a guessed name.
+`wait` is **blocking event input**; `pressed()` is **held state**. They do not
+interfere: a press read by `wait` still counts as held, and asking what is held
+never takes a press away from a wait.
+
+Key names are uppercase and the same on every platform, and the same names work
+for both: `"W"` … `"Z"`, `"0"` … `"9"`, `"ESCAPE"`, `"ENTER"`, `"SPACE"`,
+`"UP"`, `"DOWN"`, `"LEFT"`, `"RIGHT"`. Keys outside that list are ignored rather
+than reported under a guessed name, and asking about one by a name that is not
+in it is an error rather than a silent `False`.
+
+See [`examples/keyboard_state_test.py`](examples/keyboard_state_test.py).
 
 > `key` is a live value, not a string. It compares, prints and formats like the
 > key name, which covers ordinary use. To keep a copy that will not change with
