@@ -77,19 +77,55 @@ that directory is gitignored: a library there is yours, not the project's.
 
 ## What is in it
 
-Right now: the two discovery functions, and nothing else.
+Discovery, and the renderer.
 
 ```rust
 trjoludus_abi_version() -> u32
 trjoludus_implements(name: *const c_char) -> c_int
+
+trjoludus_render_clear(...)
+trjoludus_render_set_pixel(...)
+trjoludus_render_fill_rect(...)
+trjoludus_render_draw_line(...)
+trjoludus_render_draw_glyphs(...)
+trjoludus_render_draw_image(...)
+trjoludus_render_draw_image_scaled(...)
 ```
 
-`IMPLEMENTED` in `src/lib.rs` is empty, and that is deliberate. Milestone 3.0
-built the architecture; the subsystems move across one at a time afterwards,
-starting with rendering. A subsystem is added to that list **in the step that
-implements it** -- one that claimed to be implemented while doing nothing would
-be worse than one that honestly reports itself missing, because
-`rendering.engine = "rust"` would then succeed and change nothing.
+`IMPLEMENTED` in `src/lib.rs` lists `"rendering"` and nothing else. A subsystem
+is added to that list **in the step that implements it** -- one claiming to be
+implemented while doing nothing would make `<system>.engine = "rust"` succeed
+and change nothing, which is worse than an honest refusal.
+
+The drawing itself is in `src/render.rs`, with no FFI and no `unsafe` in it.
+`src/lib.rs` is the C wrapper: it borrows the caller's buffers, contains any
+panic, and returns a status code.
+
+### Every drawing function looks like this
+
+```text
+(buffer, length, width, height, ...arguments..., colour) -> status
+```
+
+* **The buffer belongs to the caller.** It is borrowed for exactly one call and
+  never kept. Nothing here allocates anything Python has to free, so there is
+  no ownership to get wrong and nothing to leak.
+* **Coordinates are already whole numbers.** Python rounds, because Python
+  rounds half to even and Rust rounds half away from zero, and a renderer that
+  disagreed with the other one about which pixel is "the" pixel would be
+  half-right in a way nobody could see.
+* **Sizes are already worked out.** A scaled image arrives with its target size
+  computed, for the same reason.
+* **A status other than 0 becomes a Python exception.** A failed frame must not
+  look like a drawn one.
+
+### Panics
+
+Every exported function wraps its work in `catch_unwind`. A panic becomes
+`STATUS_PANIC` and then a `RenderingError` in Python -- it never unwinds into
+C, which would be undefined behaviour. This is why the release profile does
+*not* set `panic = "abort"`: aborting would turn a drawing bug into a dead
+process with no traceback.
 
 ## The three rules at this boundary
 

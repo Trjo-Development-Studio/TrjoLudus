@@ -746,7 +746,7 @@ The subsystems, and whether `"auto"` prefers native for them:
 
 | Subsystem | `"auto"` prefers | Implemented today |
 | --- | --- | --- |
-| `rendering` | native | Python |
+| `rendering` | native | **Python and Rust** |
 | `image` | native | Python |
 | `collision` | native | neither yet |
 | `physics` | native | neither yet |
@@ -759,11 +759,11 @@ The first six are the ones where the work is per-pixel or per-entity every
 frame. The rest stay on Python until there is a measurement saying otherwise --
 nothing is moved to Rust to fill in a table.
 
-**Nothing is faked.** No native implementation exists yet, so `"auto"` uses
-Python everywhere today and `rendering.engine = "rust"` raises an error saying
-so. That is the point: an explicit choice that cannot be honoured is reported,
-not quietly swapped for the other one. The error distinguishes the two reasons
-it might fail:
+**Rendering is the one that has moved.** With a native library present,
+`"auto"` renders in Rust; without one it renders in Python, and both draw the
+same pixels -- the test suite compares them byte for byte. Every other
+subsystem is still Python, and asking one of them for `"rust"` says so rather
+than pretending. The error distinguishes the two reasons it might fail:
 
 ```text
 The native library is loaded but does not implement it yet.
@@ -774,7 +774,7 @@ The native library is not built or could not be loaded; see rust/README.md.
 
 | Platform | Native library | How it was verified |
 | --- | --- | --- |
-| Linux x86-64 | **supported** | built, packaged, installed and loaded here |
+| Linux x86-64 | **supported** | built, packaged, installed, loaded and rendering here |
 | Windows | not verified | never built or run |
 | macOS | not verified | never built or run |
 | Linux ARM | not verified | never built or run |
@@ -800,6 +800,27 @@ run(MyGame())
 Settings are per subsystem and independent: choosing one backend for rendering
 says nothing about physics. They last for the life of the process, because they
 are a statement about how the program should run rather than about one game.
+
+### How much faster is it?
+
+Rendering the same scenes into a 640x480 frame, on this machine:
+
+| Work | Python | Rust |
+| --- | --- | --- |
+| clearing | 5.2 ms | 1.1 ms |
+| rectangles | 22.9 ms | 9.9 ms |
+| lines | 856 ms | 16.8 ms |
+| text | 172 ms | 14.6 ms |
+| images, opaque | 42.4 ms | 9.4 ms |
+| images, transparent | 1419 ms | 11.6 ms |
+| images, scaled 2x | 2444 ms | 15.7 ms |
+| **a whole frame** | **278 ms** | **4.8 ms** |
+
+Run it yourself with `python tools/benchmark_rendering.py`. It is
+informational: the numbers move with the machine, and no test depends on them.
+
+The pixels are identical either way, which is the part that is tested rather
+than measured.
 
 Building the native library is documented in [`rust/README.md`](rust/README.md),
 and is only of interest if you are working on the engine itself.

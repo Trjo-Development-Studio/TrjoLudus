@@ -87,16 +87,22 @@ class TestArchitecturalRules(unittest.TestCase):
                     "or trjoludus/native/",
                 )
 
-    def test_only_the_loader_loads_the_native_library(self):
-        """One file talks to the native library, as one talks to each OS."""
-        loaders = [
-            path for path in NATIVE_ROOT.rglob("*.py")
-            if "ctypes" in imported_module_names(
-                ast.parse(path.read_text(encoding="utf-8")))
-        ]
+    def test_only_the_loader_opens_a_library(self):
+        """One file opens libraries, as one module per platform does.
+
+        Other modules under native/ may *call* into the library -- that is
+        what a subsystem binding is -- but they ask the loader for the handle
+        rather than finding one themselves, so there is one place that knows
+        where libraries come from.
+        """
+        openers = []
+        for path in sorted(NATIVE_ROOT.rglob("*.py")):
+            source = path.read_text(encoding="utf-8")
+            if "CDLL(" in source or "LoadLibrary" in source:
+                openers.append(path.name)
         self.assertEqual(
-            [path.name for path in loaders], ["library.py"],
-            "loading the native library belongs in native/library.py alone",
+            openers, ["library.py"],
+            "opening a native library belongs in native/library.py alone",
         )
 
     def test_the_native_layer_is_not_reached_from_the_public_api(self):

@@ -29,7 +29,15 @@ from trjoludus import (
 )
 from trjoludus import Game
 from trjoludus.app import Application
-from trjoludus.native import AUTO, PYTHON, RUST, EngineError, library, registry
+from trjoludus.native import (
+    AUTO,
+    PYTHON,
+    RUST,
+    EngineError,
+    library,
+    registry,
+    renderer,
+)
 from trjoludus.platform.null import NullBackend
 
 #: The subsystems that must run natively once they can.
@@ -56,8 +64,12 @@ class PretendLibrary:
 
     Not a stub subsystem: it cannot render or collide anything. It exists so
     that the *decision* "a native implementation is available" can be tested
-    without a Rust toolchain, which is the only part of the architecture that
-    otherwise could not be reached from Python.
+    for subsystems that have no native implementation at all.
+
+    It deliberately cannot stand in for rendering. Rendering now asks its
+    binding whether the library really has the functions, so a stand-in that
+    only says the word "rendering" is correctly judged unavailable -- which is
+    the behaviour that stops a half-built library failing on the first frame.
     """
 
     def __init__(self, implements=(), abi=library.ABI_VERSION):
@@ -75,6 +87,8 @@ class BackendTestCase(unittest.TestCase):
     def setUp(self):
         registry.reset()
         library.forget()
+        renderer.forget()
+        self.addCleanup(renderer.forget)
         self.addCleanup(library.forget)
         self.addCleanup(registry.reset)
 
@@ -82,11 +96,13 @@ class BackendTestCase(unittest.TestCase):
         """Answer as though a library implementing these names existed."""
         library._library = PretendLibrary(names)
         library._problem = None
+        renderer.forget()
 
     def pretend_nothing(self):
         """Make the loader answer as if there were no library at all."""
         library._library = None
         library._problem = "no native library found (test)"
+        renderer.forget()
 
 
 class TestDefaults(BackendTestCase):
@@ -218,8 +234,19 @@ class TestWithNoNativeLibrary(BackendTestCase):
 
 class TestWithANativeLibrary(BackendTestCase):
     def test_auto_prefers_the_native_one_for_always_native_systems(self):
-        self.pretend("rendering")
+        """Rendering is migrated, so auto takes it when it is really there."""
+        if not renderer.available():
+            self.skipTest("no native renderer built here")
+        library.forget()
         self.assertEqual(registry.system("rendering").resolve(), RUST)
+
+    def test_a_library_that_only_says_the_word_is_not_enough(self):
+        """A stand-in claiming rendering, with no functions, is refused."""
+        self.pretend("rendering")
+        self.assertFalse(registry.system("rendering").available())
+        rendering.engine = RUST
+        with self.assertRaises(EngineError):
+            registry.system("rendering").resolve()
 
     def test_auto_leaves_flexible_systems_on_python(self):
         """"auto" must not sweep a system into Rust just because it can."""
@@ -238,12 +265,12 @@ class TestWithANativeLibrary(BackendTestCase):
         self.assertEqual(registry.system("rendering").resolve(), PYTHON)
 
     def test_availability_is_per_system(self):
-        self.pretend("rendering")
-        self.assertTrue(registry.system("rendering").available())
+        self.pretend("animation")
+        self.assertTrue(registry.system("animation").available())
         self.assertFalse(registry.system("physics").available())
 
     def test_a_system_the_library_does_not_implement_still_errors(self):
-        self.pretend("rendering")
+        self.pretend("animation")
         physics.engine = RUST
         with self.assertRaises(EngineError) as caught:
             registry.system("physics").resolve()
@@ -251,8 +278,9 @@ class TestWithANativeLibrary(BackendTestCase):
 
     def test_auto_is_not_a_coin_toss(self):
         """The same question must give the same answer every time."""
-        self.pretend("rendering")
-        answers = {registry.system("rendering").resolve() for _ in range(50)}
+        self.pretend("animation")
+        animation.engine = RUST
+        answers = {registry.system("animation").resolve() for _ in range(50)}
         self.assertEqual(answers, {RUST})
 
 
@@ -385,17 +413,22 @@ class TestConfigurationTiming(BackendTestCase):
 
     def test_no_resolution_is_cached_across_runs(self):
         """A run leaves no decision behind for a later change to miss."""
-        self.pretend("rendering")
-        self.assertEqual(registry.system("rendering").resolve(), RUST)
+        self.pretend("animation")
+        animation.engine = RUST
+        self.assertEqual(registry.system("animation").resolve(), RUST)
         self.pretend_nothing()
-        self.assertEqual(registry.system("rendering").resolve(), PYTHON)
+        animation.engine = AUTO
+        self.assertEqual(registry.system("animation").resolve(), PYTHON)
 
 
 class TestSettingsPersist(BackendTestCase):
     """A choice lasts until the developer changes it, and no longer."""
 
     def test_a_new_game_instance_does_not_reset_it(self):
-        rendering.engine = RUST
+        # PYTHON rather than RUST: this is about a setting surviving a run,
+        # and rendering now actually uses the setting -- asking for a renderer
+        # that may not be built here would be testing something else.
+        rendering.engine = PYTHON
 
         class First(Game):
             def on_update(self, dt):
@@ -407,10 +440,10 @@ class TestSettingsPersist(BackendTestCase):
 
         Application(First(), size=(40, 30), max_fps=None,
                     backend=NullBackend()).run()
-        self.assertEqual(rendering.engine, RUST)
+        self.assertEqual(rendering.engine, PYTHON)
         Application(Second(), size=(40, 30), max_fps=None,
                     backend=NullBackend()).run()
-        self.assertEqual(rendering.engine, RUST,
+        self.assertEqual(rendering.engine, PYTHON,
                          "a new Game instance reset the configuration")
 
     def test_constructing_an_application_does_not_reset_it(self):
@@ -433,7 +466,7 @@ class TestSettingsPersist(BackendTestCase):
 
     def test_several_runs_keep_every_setting(self):
         rendering.engine = PYTHON
-        animation.engine = RUST
+        animation.engine = RUST      # nothing resolves animation in a run
         physics.engine = PYTHON
 
         class G(Game):
@@ -470,12 +503,12 @@ class TestSettingsPersist(BackendTestCase):
 
     def test_availability_is_asked_again_each_time(self):
         """A resolver that cached would answer for a library long gone."""
-        self.pretend("rendering")
-        self.assertTrue(registry.system("rendering").available())
+        self.pretend("animation")
+        self.assertTrue(registry.system("animation").available())
         self.pretend_nothing()
-        self.assertFalse(registry.system("rendering").available())
-        self.pretend("rendering")
-        self.assertTrue(registry.system("rendering").available())
+        self.assertFalse(registry.system("animation").available())
+        self.pretend("animation")
+        self.assertTrue(registry.system("animation").available())
 
 
 class TestTheWildcardImport(BackendTestCase):
@@ -643,34 +676,46 @@ class TestTheLibraryLoader(BackendTestCase):
         self.assertIsNone(library.problem())
         self.assertEqual(library.library_path(), found)
 
-    def test_a_real_library_implements_nothing_yet(self):
+    def test_a_real_library_implements_rendering_and_nothing_else(self):
         found = self.a_real_library()
         if found is None:
             self.skipTest("no compiled library anywhere; run cargo build")
         self.look_in(found.parent)
+        self.assertTrue(library.implements("rendering"))
         for name in MODULES:
+            if name == "rendering":
+                continue
             with self.subTest(system=name):
                 self.assertFalse(
                     library.implements(name),
-                    f"the native library claims to implement {name}, but no "
-                    f"subsystem has been migrated",
+                    f"the native library claims to implement {name}, but "
+                    f"only rendering has been migrated",
                 )
 
-    def test_a_real_library_still_leaves_auto_on_python(self):
+    def test_a_real_library_puts_auto_on_rust_for_rendering(self):
         found = self.a_real_library()
         if found is None:
             self.skipTest("no compiled library anywhere; run cargo build")
         self.look_in(found.parent)
-        self.assertEqual(registry.system("rendering").resolve(), PYTHON)
+        renderer.forget()
+        self.assertEqual(registry.system("rendering").resolve(), RUST)
 
-    def test_explicit_rust_says_the_library_is_there_but_empty(self):
+    def test_auto_still_leaves_unmigrated_systems_on_python(self):
         found = self.a_real_library()
         if found is None:
             self.skipTest("no compiled library anywhere; run cargo build")
         self.look_in(found.parent)
-        rendering.engine = RUST
+        self.assertEqual(registry.system("image").resolve(), PYTHON)
+        self.assertEqual(registry.system("animation").resolve(), PYTHON)
+
+    def test_explicit_rust_for_an_unmigrated_system_says_so(self):
+        found = self.a_real_library()
+        if found is None:
+            self.skipTest("no compiled library anywhere; run cargo build")
+        self.look_in(found.parent)
+        physics.engine = RUST
         with self.assertRaises(EngineError) as caught:
-            registry.system("rendering").resolve()
+            registry.system("physics").resolve()
         message = str(caught.exception)
         self.assertIn("does not implement it yet", message)
         self.assertNotIn("not built", message)
@@ -721,13 +766,13 @@ class TestTheLibraryLoader(BackendTestCase):
         self.assertIsNotNone(found, "the Rust crate declares no ABI version")
         self.assertEqual(int(found.group(1)), library.ABI_VERSION)
 
-    def test_the_rust_crate_implements_nothing_yet(self):
-        """Milestone 3.0.2 packages the crate; it still implements nothing."""
+    def test_the_rust_crate_implements_only_rendering(self):
+        """Milestone 3.1 migrates rendering, and nothing else."""
         source = (REPOSITORY / "rust" / "trjoludus-native" / "src"
                   / "lib.rs")
         if not source.is_file():
             self.skipTest("no Rust source here (installed package)")
-        self.assertIn("pub const IMPLEMENTED: &[&str] = &[];",
+        self.assertIn('pub const IMPLEMENTED: &[&str] = &["rendering"];',
                       source.read_text())
 
 

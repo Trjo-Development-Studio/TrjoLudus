@@ -123,10 +123,22 @@ class System:
         return value
 
     def available(self) -> bool:
-        """Whether a native implementation of this system can be used now."""
+        """Whether a native implementation of this system can be used now.
+
+        The library saying it implements something is necessary but not
+        sufficient: a subsystem also gets to say whether it can actually
+        start. A library missing half a subsystem's functions would otherwise
+        be discovered on the first frame rather than here.
+        """
         from trjoludus.native import library
 
-        return library.implements(self._name)
+        if not library.implements(self._name):
+            return False
+        if self._name == "rendering":
+            from trjoludus.native import renderer
+
+            return renderer.available()
+        return True
 
     def resolve(self) -> str:
         """Which implementation to use: ``"rust"`` or ``"python"``.
@@ -137,6 +149,19 @@ class System:
                 other one -- a game that says ``"rust"`` and gets Python has
                 been told nothing, and will wonder why it is slow.
         """
+        # Asked for Python: the answer cannot depend on what is available, so
+        # nothing native is looked for. A game that chose the Python renderer
+        # loads no library and no ctypes at all, which is what makes "python"
+        # a real fallback rather than a preference.
+        if self._engine == PYTHON:
+            if self._python_implementation is not None:
+                return PYTHON
+            raise EngineError(
+                f"{self._name}.engine is {PYTHON!r}, but {self._name} has no "
+                f"Python implementation: nothing implements it yet in either "
+                f"language."
+            )
+
         native = self.available()
 
         if self._engine == RUST:
@@ -147,15 +172,6 @@ class System:
                 f"implementation of {self._name} available. "
                 f"{self._unavailable_reason()} "
                 f"Use {AUTO!r} to let TrjoLudus pick whichever is there."
-            )
-
-        if self._engine == PYTHON:
-            if self._python_implementation is not None:
-                return PYTHON
-            raise EngineError(
-                f"{self._name}.engine is {PYTHON!r}, but {self._name} has no "
-                f"Python implementation: nothing implements it yet in either "
-                f"language."
             )
 
         # "auto": the native one when this is a system meant to run natively

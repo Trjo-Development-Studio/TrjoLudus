@@ -42,7 +42,7 @@ from trjoludus.events import (
 )
 from trjoludus.keyboard import KeyboardState
 from trjoludus.mouse import MouseState
-from trjoludus.rendering_python import Framebuffer
+from trjoludus import rendering
 from trjoludus.scene import current_scene
 from trjoludus.ui import current_ui
 
@@ -146,7 +146,10 @@ class Application:
         self._title = _validate_title(title)
         self._size = _validate_size(size)
         self._clock = Clock(max_fps=max_fps)
-        self._framebuffer = Framebuffer(*self._size)
+        # Made when the run starts, not here: which renderer draws is a
+        # decision a game makes before run(), and constructing an
+        # Application must not settle it.
+        self._framebuffer = None
         # One queue, in arrival order, holding every kind of input. Separate
         # queues per kind would lose the order between a key and a click,
         # which input.wait() has to preserve.
@@ -216,6 +219,10 @@ class Application:
         previous, _running = _running, self
         try:
             width, height = self._size
+            # Which renderer draws is settled here, once, before anything has
+            # drawn a frame -- so a run cannot be half on one and half on the
+            # other.
+            self._framebuffer = rendering.create_framebuffer(width, height)
             window = self._backend.create_window(self._title, width, height)
             self._window = window
             # A stop request belongs to one run. Clearing it here is what lets
@@ -239,6 +246,7 @@ class Application:
 
             _running = previous
             self._window = None
+            self._framebuffer = None
             self._input.clear()
             self._mouse_states.clear()
             # Nothing can still be held once the window is gone: there is no

@@ -28,12 +28,13 @@ import ctypes
 import os
 from pathlib import Path
 
-__all__ = ["ABI_VERSION", "implements", "library_path", "loaded", "version"]
+__all__ = ["ABI_VERSION", "handle", "implements", "library_path",
+           "loaded", "version"]
 
 #: The ABI this version of TrjoLudus speaks. A library built for a different
 #: one is refused rather than called: the alternative is calling a function
 #: whose arguments have moved, which is a crash with no explanation.
-ABI_VERSION = 1
+ABI_VERSION = 2
 
 #: Where a built library is looked for, in order. Several names rather than a
 #: branch on the host operating system: only one of them will exist, and
@@ -156,6 +157,16 @@ def _handle():
     if _library is _UNSEARCHED:
         _load()
     return _library
+
+
+def handle():
+    """The loaded library itself, or ``None``.
+
+    For the modules that call into it. Loading stays here -- this is the only
+    place that opens a library -- and the subsystems ask for the handle rather
+    than finding one of their own.
+    """
+    return _handle()
 
 
 def loaded() -> bool:

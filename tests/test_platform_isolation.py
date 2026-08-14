@@ -83,6 +83,13 @@ class TestImportIsolation(unittest.TestCase):
         self.assertEqual(loaded, [])
 
     def test_running_a_game_on_null_loads_neither_graphical_backend(self):
+        """No X11, no Win32.
+
+        ``ctypes`` is not part of this any more: the native renderer loads it
+        when a game runs on the native backend, which is a different thing
+        from a graphical platform backend being dragged in. The next test
+        pins the ctypes side down where it can be pinned down.
+        """
         loaded = self.loaded_after(
             "import trjoludus as tl\n"
             "class G(tl.Game):\n"
@@ -90,7 +97,21 @@ class TestImportIsolation(unittest.TestCase):
             "tl.run(G(), max_fps=None)\n",
             {**os.environ, "TRJOLUDUS_BACKEND": "null"},
         )
-        self.assertEqual(loaded, [])
+        backends = [name for name in loaded if name.startswith("trjoludus")]
+        self.assertEqual(backends, [])
+
+    def test_the_python_renderer_loads_nothing_native(self):
+        """A game that asked for Python rendering gets no ctypes at all."""
+        loaded = self.loaded_after(
+            "import trjoludus as tl\n"
+            "tl.rendering.engine = 'python'\n"
+            "class G(tl.Game):\n"
+            "    def on_update(self, dt): self.quit()\n"
+            "tl.run(G(), max_fps=None)\n",
+            {**os.environ, "TRJOLUDUS_BACKEND": "null"},
+        )
+        self.assertEqual(loaded, [],
+                         "the Python renderer pulled in native code")
 
     @unittest.skipIf(ON_WINDOWS, "X11 is not the platform backend here")
     @unittest.skipUnless(os.environ.get("DISPLAY"), "no X11 display")

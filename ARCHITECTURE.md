@@ -593,6 +593,16 @@ Ordered by severity.
 | 2026-08-22 | The loader finds its library relative to itself | `Path(__file__).parent / "lib"` is the same place in a checkout and in a package installed anywhere at all. Nothing depends on the working directory, on `rust/target/`, or on where the source once was |
 | 2026-08-22 | `TRJOLUDUS_NATIVE_DIR` exists for tests and development | The loader tests point at directories they create, so "there is a library" and "there is none" are both reachable on purpose. A suite whose result depends on whether the developer ran cargo this morning is not a suite |
 | 2026-08-22 | Only Linux x86-64 is claimed | It is the only platform where the library has been built, packaged, installed and loaded. Windows, macOS and ARM are not claimed because they have not been done -- and the tag is `linux_x86_64` rather than `manylinux` because a manylinux promise about C library ranges has not been tested |
+| 2026-08-23 | Rust borrows the frame buffer; Python owns it | Every drawing call passes a pointer to a `bytearray` Python allocated, and the native side keeps nothing after returning. Nothing is allocated natively, so there is nothing for Python to free and nothing to leak. It also keeps `pixels` the same `bytearray` a backend already presents, so nothing above the renderer can tell which one drew |
+| 2026-08-23 | Every rounding happens in Python; the ABI takes integers | Python rounds half to even, Rust rounds half away from zero. A position rounded on the far side of the boundary would land on a different pixel about one time in two hundred. Scaled sizes are worked out in Python for the same reason. The result is that the two renderers agree exactly rather than nearly |
+| 2026-08-23 | The font stays in Python; glyph columns cross the boundary | `draw_text` looks each character up in `trjoludus.font` and sends the whole string's column bytes as one buffer. A copy of the font in Rust would be a second source of truth that could drift, and drift in a font is invisible until someone reads the text |
+| 2026-08-23 | No panic crosses the ABI | Every exported function runs inside `catch_unwind` and returns a status code, which Python turns into a `RenderingError`. `panic = "abort"` was removed to make that possible: aborting turns a drawing bug into a dead process with no traceback, which is worse for a game than an exception |
+| 2026-08-23 | A native failure is never a silently successful frame | Status codes become exceptions at the call site. A renderer that failed halfway and returned quietly would leave a game drawing into a frame nobody checked |
+| 2026-08-23 | The renderer is chosen once, when a run begins | `Application.run` asks `rendering.create_framebuffer`, so a run cannot be half on one renderer and half on the other, and constructing an `Application` settles nothing |
+| 2026-08-23 | `engine = "python"` looks for nothing native | Resolution answers Python before asking what is available, so a game that chose the Python renderer loads no library and no `ctypes` at all. That is what makes it a real fallback rather than a preference |
+| 2026-08-23 | Saying "rendering" is not enough to be the renderer | A subsystem gets to say whether it can actually start, and the renderer checks that every function it needs is really exported. A half-built library is caught at resolution rather than on the first frame |
+| 2026-08-23 | The Python renderer stays, as the reference | It is what the Rust one is tested against, byte for byte. Deleting it would leave the native renderer with nothing to be compared to, and leave every platform without a native build with no renderer at all |
+| 2026-08-23 | `clear` and `fill_rect` fill by copying, not per pixel | Measured first: a per-pixel loop in Rust was *slower* at clearing than Python's `pixels[:] = pattern * count`, which is one C-level fill. Doubling a filled region with `copy_within` turns it into memcpy. The only optimisation in this milestone, made after correctness was proved and because a measurement asked for it |
 | 2026-08-12 | The scene is cleared when a run finishes | The objects belonged to that run. Leaving them would make a second `run()` inherit the first game's scene and collide on every name; anything created before a run still takes part in it |
 | 2026-08-12 | One conformance suite runs the same contract assertions against every backend | A platform abstraction is only real if the layers above cannot tell which backend is underneath. Backends that cannot run on the current machine are skipped, never mocked -- a fake window server would agree with a wrong implementation |
 | 2026-08-12 | Tutorial code may use the public API only | No `trjoludus.platform`, no `ctypes`, no private internals. A lesson that cannot be written without reaching past the public API is evidence the public API is unfinished, and the fix belongs in the engine. `examples/window_test.py` currently breaks this rule out of necessity and is therefore classified as an engine smoke test, to be replaced by a real first lesson once backend selection exists |
@@ -764,13 +774,30 @@ The loader looks in `trjoludus/native/lib/`, found relative to the loader's own
 file -- the same place whether TrjoLudus is a checkout or an installed package
 somewhere unrelated to it.
 
+### The rendering subsystem
+
+The first subsystem to have both implementations:
+
+| Piece | Where |
+| --- | --- |
+| the choice | `trjoludus/rendering.py` -- `rendering.engine`, and `create_framebuffer` |
+| Python implementation | `trjoludus/rendering_python.py` -- `Framebuffer` |
+| the binding | `trjoludus/native/renderer.py` -- `NativeFramebuffer`, same surface |
+| Rust implementation | `rust/trjoludus-native/src/render.rs` |
+
+The two framebuffers are interchangeable: same methods, same arguments, same
+pixels, and `pixels` is a `bytearray` either way. A test asserts the two
+classes offer the same names, and sixty-five differential tests assert they
+produce the same bytes.
+
 ### Rules
 
 - `ctypes` may be imported under `trjoludus/platform/` **and**
   `trjoludus/native/`, and nowhere else. Both are boundaries to code that is
   not Python. Enforced by `tests/test_architecture.py`.
-- Only `native/library.py` loads the library, as only one module per platform
-  loads that platform's libraries.
+- Only `native/library.py` *opens* a library. Subsystem bindings call into it
+  through the handle it hands out, as one module per platform opens that
+  platform's libraries.
 - `native` is not in `trjoludus.__all__`. A game never imports the boundary.
 - No Rust concept -- pointer, handle, struct, FFI type -- appears in a public
   name. Enforced by a test.
