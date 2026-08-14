@@ -47,7 +47,12 @@ _STATUS_MEANINGS = {
 #: makes ctypes assume ``int``, which truncates a 64-bit value and takes the
 #: next call with it.
 _BUFFER = ctypes.POINTER(ctypes.c_ubyte)
-_READONLY = ctypes.POINTER(ctypes.c_ubyte)
+#: Read-only data crosses as ``char *``. Passing a ``bytes`` to one of these
+#: hands over a pointer to the object's own buffer -- no copy, no allocation,
+#: whatever the size. Wrapping it in an array type instead copied the whole
+#: image on every draw call, which is 7 microseconds for a 256 KB sprite and
+#: happens once per object per frame.
+_READONLY = ctypes.c_char_p
 _SIZE = ctypes.c_size_t
 _INT = ctypes.c_int64
 _BYTE = ctypes.c_uint8
@@ -262,10 +267,9 @@ class NativeFramebuffer:
             columns += font.columns_for(character)
 
         red, green, blue = colour
-        glyphs = (ctypes.c_ubyte * len(columns)).from_buffer(columns)
         self._check(self._call["trjoludus_render_draw_glyphs"](
             self._view, len(self._pixels), self._width, self._height,
-            glyphs, len(columns),
+            bytes(columns), len(columns),
             font.CHARACTER_WIDTH, font.CHARACTER_HEIGHT,
             font.CHARACTER_WIDTH + font.SPACING,
             round(x), round(y), red, green, blue))
@@ -278,8 +282,9 @@ class NativeFramebuffer:
         rounding rule exists.
         """
         x, y = round(x), round(y)
-        source = (ctypes.c_ubyte * len(image.pixels)).from_buffer_copy(
-            image.pixels)
+        # image.pixels is bytes, and bytes are immutable, so lending the
+        # native side a pointer to them for one call is safe by construction.
+        source = image.pixels
 
         if scale != 1.0:
             target_width = round(image.width * scale)

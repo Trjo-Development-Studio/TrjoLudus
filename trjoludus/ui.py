@@ -32,6 +32,7 @@ one the mouse finds.
 from math import isfinite
 
 from trjoludus import color as color_module
+from trjoludus import engine
 from trjoludus import font
 from trjoludus.errors import TrjoLudusError
 
@@ -826,13 +827,10 @@ class Ui:
             drawing_list.render(framebuffer)
 
 
-_current = Ui()
-
-
 def current_ui() -> Ui:
     """The drawing lists the engine draws.
 
-    One per process, cleared when a run finishes, so a second game does not
-    inherit the first one's menus.
+    Belongs to the engine state, which a run replaces, so a second game does
+    not inherit the first one's menus.
     """
-    return _current
+    return engine.current().drawings

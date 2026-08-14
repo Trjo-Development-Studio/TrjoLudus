@@ -48,18 +48,21 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod render;
+pub mod world;
 
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 
+use world::{Object, World, WorldMut};
+
 /// The ABI this library speaks.
 ///
 /// Python refuses a library whose number is not the one it expects, rather
 /// than calling a function whose arguments have since moved. Bump it whenever
 /// the meaning of any exported function changes.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// The subsystems implemented here.
 ///
@@ -79,6 +82,8 @@ pub const STATUS_NULL: c_int = -1;
 pub const STATUS_BAD_BUFFER: c_int = -2;
 /// Something panicked. Contained here; never unwound into C.
 pub const STATUS_PANIC: c_int = -3;
+/// The slot asked about holds no live object. An answer, not a failure.
+pub const STATUS_NO_OBJECT: c_int = -4;
 
 /// Returns the ABI version this library was built against.
 ///
@@ -120,6 +125,14 @@ fn guarded(work: impl FnOnce() -> c_int) -> c_int {
     match catch_unwind(AssertUnwindSafe(work)) {
         Ok(status) => status,
         Err(_) => STATUS_PANIC,
+    }
+}
+
+/// As [`guarded`], for the functions that answer with a count.
+fn guarded_i64(work: impl FnOnce() -> i64) -> i64 {
+    match catch_unwind(AssertUnwindSafe(work)) {
+        Ok(value) => value,
+        Err(_) => STATUS_PANIC as i64,
     }
 }
 
@@ -386,6 +399,208 @@ pub unsafe extern "C" fn trjoludus_render_draw_image(
     })
 }
 
+/// The engine's object table, as it arrives from Python.
+///
+/// Six pointers and a count: one array per field, all the same length. Python
+/// owns every one of them and they stay valid for the length of one call --
+/// the same borrowing rule the renderer's frame buffer follows.
+///
+/// This is a C struct on purpose. Python builds one with `ctypes` and never
+/// learns anything about how Rust arranges the world.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct WorldTable {
+    /// Positions, fractional.
+    pub x: *mut f64,
+    pub y: *mut f64,
+    /// How much bigger than its image each object is drawn.
+    pub scale: *const f64,
+    /// Image sizes, whole pixels.
+    pub width: *const i32,
+    pub height: *const i32,
+    /// ALIVE and VISIBLE per object.
+    pub flags: *const i32,
+    /// How many slots each array holds.
+    pub count: usize,
+}
+
+impl WorldTable {
+    /// Whether every pointer is there.
+    fn complete(&self) -> bool {
+        !self.x.is_null()
+            && !self.y.is_null()
+            && !self.scale.is_null()
+            && !self.width.is_null()
+            && !self.height.is_null()
+            && !self.flags.is_null()
+    }
+}
+
+/// Borrow a table for reading.
+///
+/// # Safety
+///
+/// Every pointer must address `count` readable values that stay valid and
+/// unaliased for this call.
+unsafe fn borrow_world<'a>(table: &WorldTable) -> Result<World<'a>, c_int> {
+    // An empty world is a world. Python's arrays have no allocation until
+    // something is put in them, so their pointers are null while a game has
+    // created nothing -- and `from_raw_parts` on null is undefined behaviour
+    // even for a length of zero.
+    if table.count == 0 {
+        return Ok(World {
+            x: &[],
+            y: &[],
+            scale: &[],
+            width: &[],
+            height: &[],
+            flags: &[],
+        });
+    }
+    if !table.complete() {
+        return Err(STATUS_NULL);
+    }
+    // Safety: forwarded from this function's contract.
+    let world = unsafe {
+        World {
+            x: slice::from_raw_parts(table.x, table.count),
+            y: slice::from_raw_parts(table.y, table.count),
+            scale: slice::from_raw_parts(table.scale, table.count),
+            width: slice::from_raw_parts(table.width, table.count),
+            height: slice::from_raw_parts(table.height, table.count),
+            flags: slice::from_raw_parts(table.flags, table.count),
+        }
+    };
+    if !world.consistent() {
+        return Err(STATUS_BAD_BUFFER);
+    }
+    Ok(world)
+}
+
+/// Borrow a table for changing positions.
+///
+/// # Safety
+///
+/// As [`borrow_world`], and `x` and `y` must be writable.
+unsafe fn borrow_world_mut<'a>(table: &WorldTable) -> Result<WorldMut<'a>, c_int> {
+    // As above: an empty table is empty, not broken.
+    if table.count == 0 {
+        return Ok(WorldMut { x: &mut [], y: &mut [], flags: &[] });
+    }
+    if !table.complete() {
+        return Err(STATUS_NULL);
+    }
+    // Safety: forwarded from this function's contract.
+    let world = unsafe {
+        WorldMut {
+            x: slice::from_raw_parts_mut(table.x, table.count),
+            y: slice::from_raw_parts_mut(table.y, table.count),
+            flags: slice::from_raw_parts(table.flags, table.count),
+        }
+    };
+    if !world.consistent() {
+        return Err(STATUS_BAD_BUFFER);
+    }
+    Ok(world)
+}
+
+/// How many objects in the table have not been destroyed.
+///
+/// Returns a negative status on failure, so a caller can tell "no objects"
+/// from "that was not a table".
+///
+/// # Safety
+///
+/// `table` must point to a valid [`WorldTable`] whose arrays stay valid for
+/// this call.
+#[no_mangle]
+pub unsafe extern "C" fn trjoludus_world_live(table: *const WorldTable) -> i64 {
+    guarded_i64(|| {
+        if table.is_null() {
+            return STATUS_NULL as i64;
+        }
+        // Safety: forwarded from this function's contract.
+        let table = unsafe { &*table };
+        // Safety: as above.
+        match unsafe { borrow_world(table) } {
+            Ok(world) => world.live() as i64,
+            Err(status) => status as i64,
+        }
+    })
+}
+
+/// Copy one object's numbers into `out`.
+///
+/// `out` is the caller's, and is only written when this returns
+/// [`STATUS_OK`]. A slot that is empty or out of range is
+/// [`STATUS_NO_OBJECT`], which is not an error so much as an answer.
+///
+/// # Safety
+///
+/// `table` and `out` must be valid pointers for this call.
+#[no_mangle]
+pub unsafe extern "C" fn trjoludus_world_read(
+    table: *const WorldTable,
+    slot: usize,
+    out: *mut Object,
+) -> c_int {
+    guarded(|| {
+        if table.is_null() || out.is_null() {
+            return STATUS_NULL;
+        }
+        // Safety: forwarded from this function's contract.
+        let table = unsafe { &*table };
+        // Safety: as above.
+        let world = match unsafe { borrow_world(table) } {
+            Ok(world) => world,
+            Err(status) => return status,
+        };
+        match world.get(slot) {
+            Some(object) => {
+                // Safety: `out` is a valid, writable Object per the contract.
+                unsafe { *out = object };
+                STATUS_OK
+            }
+            None => STATUS_NO_OBJECT,
+        }
+    })
+}
+
+/// Put one object somewhere.
+///
+/// The one thing native code may change about the world today, and it changes
+/// Python's memory directly -- there is no copy to write back. A slot that is
+/// empty or out of range is [`STATUS_NO_OBJECT`] and nothing is written.
+///
+/// # Safety
+///
+/// `table` must be valid for this call, with writable `x` and `y`.
+#[no_mangle]
+pub unsafe extern "C" fn trjoludus_world_set_position(
+    table: *const WorldTable,
+    slot: usize,
+    x: f64,
+    y: f64,
+) -> c_int {
+    guarded(|| {
+        if table.is_null() {
+            return STATUS_NULL;
+        }
+        // Safety: forwarded from this function's contract.
+        let table = unsafe { &*table };
+        // Safety: as above.
+        let mut world = match unsafe { borrow_world_mut(table) } {
+            Ok(world) => world,
+            Err(status) => return status,
+        };
+        if world.set_position(slot, x, y) {
+            STATUS_OK
+        } else {
+            STATUS_NO_OBJECT
+        }
+    })
+}
+
 /// Composite an image at a different size, nearest-neighbour.
 ///
 /// `target_width` and `target_height` are worked out by the caller, because
@@ -533,6 +748,71 @@ mod tests {
             )
         };
         assert_eq!(status, STATUS_NULL);
+    }
+
+    #[test]
+    fn an_empty_world_is_not_an_error() {
+        // Every pointer null, count zero: what Python hands over before a
+        // game has created anything.
+        let table = WorldTable {
+            x: std::ptr::null_mut(),
+            y: std::ptr::null_mut(),
+            scale: std::ptr::null(),
+            width: std::ptr::null(),
+            height: std::ptr::null(),
+            flags: std::ptr::null(),
+            count: 0,
+        };
+        assert_eq!(unsafe { trjoludus_world_live(&table) }, 0);
+        let mut found = Object {
+            x: 0.0,
+            y: 0.0,
+            scale: 0.0,
+            width: 0,
+            height: 0,
+            flags: 0,
+            reserved: 0,
+        };
+        assert_eq!(
+            unsafe { trjoludus_world_read(&table, 0, &mut found) },
+            STATUS_NO_OBJECT
+        );
+        assert_eq!(
+            unsafe { trjoludus_world_set_position(&table, 0, 1.0, 1.0) },
+            STATUS_NO_OBJECT
+        );
+    }
+
+    #[test]
+    fn a_null_world_table_is_refused() {
+        assert_eq!(
+            unsafe { trjoludus_world_live(std::ptr::null()) },
+            STATUS_NULL as i64
+        );
+        assert_eq!(
+            unsafe {
+                trjoludus_world_read(std::ptr::null(), 0, std::ptr::null_mut())
+            },
+            STATUS_NULL
+        );
+    }
+
+    #[test]
+    fn a_partly_null_table_with_objects_is_refused() {
+        let values = [1.0f64, 2.0];
+        let table = WorldTable {
+            x: values.as_ptr() as *mut f64,
+            y: std::ptr::null_mut(),
+            scale: std::ptr::null(),
+            width: std::ptr::null(),
+            height: std::ptr::null(),
+            flags: std::ptr::null(),
+            count: 2,
+        };
+        assert_eq!(
+            unsafe { trjoludus_world_live(&table) },
+            STATUS_NULL as i64
+        );
     }
 
     #[test]

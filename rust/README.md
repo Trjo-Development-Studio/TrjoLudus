@@ -97,9 +97,27 @@ is added to that list **in the step that implements it** -- one claiming to be
 implemented while doing nothing would make `<system>.engine = "rust"` succeed
 and change nothing, which is worse than an honest refusal.
 
-The drawing itself is in `src/render.rs`, with no FFI and no `unsafe` in it.
-`src/lib.rs` is the C wrapper: it borrows the caller's buffers, contains any
-panic, and returns a status code.
+Plus the engine's objects:
+
+```rust
+trjoludus_world_live(table) -> i64
+trjoludus_world_read(table, slot, out) -> i32
+trjoludus_world_set_position(table, slot, x, y) -> i32
+```
+
+The drawing is in `src/render.rs` and the object view in `src/world.rs`,
+neither with any FFI or `unsafe` in it. `src/lib.rs` is the C wrapper: it
+borrows the caller's buffers, contains any panic, and returns a status code.
+
+### The world is borrowed, never owned
+
+`WorldTable` is six pointers and a count -- one array per field, all Python's.
+Nothing here keeps a copy of the game world, so there is no second world to
+drift out of step with the first. A native subsystem reads the same doubles
+Python wrote, and `set_position` writes the same ones back, in place.
+
+Native code may move an object. It may not create or destroy one: that is a
+decision about what the world contains, and it stays in Python.
 
 ### Every drawing function looks like this
 

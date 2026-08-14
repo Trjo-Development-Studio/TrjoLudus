@@ -1,0 +1,233 @@
+"""The engine's state, and who is allowed to touch it.
+
+**A game never imports this.** It exists so that Python and native subsystems
+can work on the same state rather than on copies of it that drift apart.
+
+# The rule
+
+There is one authoritative copy of anything. When rendering, physics and
+collision all want an object's position, they read *the same number*, not
+three numbers that are supposed to be equal.
+
+That is why an object's numbers live in :class:`ObjectTable` rather than as
+attributes on the object. A :class:`~trjoludus.scene.SceneObject` is a name and
+an image and a slot number; ``obj.x`` reads the table, and so does anything
+native that borrows it. Nobody holds a second copy to keep in step, because
+there is no second copy.
+
+# Who owns what
+
+============  =====================================================
+State         Owner
+============  =====================================================
+objects       :class:`ObjectTable`, owned by :class:`EngineState`
+the scene     :class:`~trjoludus.scene.Scene`, owned by the state
+drawings      :class:`~trjoludus.ui.Ui`, owned by the state
+timing        :class:`~trjoludus.clock.Clock`, lent by the application
+images        the :class:`~trjoludus.image.Image` objects themselves
+input         the running :class:`~trjoludus.app.Application`
+============  =====================================================
+
+Python allocates all of it, Python frees all of it, and native code borrows
+what it is given for the length of one call. That is the same rule the
+renderer already follows, and it is the reason there is nothing here to leak.
+
+# Lifetime
+
+One :class:`EngineState` exists at a time. A run replaces it, so a second run
+begins with an empty world rather than the last one's, and anything a game
+kept from the first run points at a state nobody is using any more.
+
+Configuration is *not* part of it. ``rendering.engine`` says how the program
+should run, not what is in this world, and it survives runs on purpose.
+
+# Threading
+
+Single-threaded, and assumed so. Nothing here is guarded, and a native call
+borrows the tables for the length of that call, so a second thread mutating
+the scene during a native call would be a data race. No part of the engine
+starts a thread today, and no claim of thread safety is made because none has
+been tested.
+"""
+
+from array import array
+
+__all__ = ["EngineState", "ObjectTable", "current", "begin_run", "end_run"]
+
+#: Bit set while an object is in the scene. Cleared when it is destroyed, so
+#: a native pass can skip it without asking Python anything.
+ALIVE = 1
+
+#: Bit set while an object should be drawn.
+VISIBLE = 2
+
+
+class ObjectTable:
+    """Where objects' numbers actually live.
+
+    One array per field rather than one record per object: a native pass over
+    every position touches one contiguous run of doubles instead of striding
+    over interleaved fields it does not want. It is also the layout that stays
+    useful if any of this is ever vectorised.
+
+    Slots are handed out on request and returned when an object is destroyed.
+    A returned slot is reused, so a game that creates and destroys objects
+    forever does not grow this without limit.
+
+    Nothing here knows what an object *is*. It holds numbers;
+    :class:`~trjoludus.scene.SceneObject` gives them meaning.
+    """
+
+    __slots__ = ("x", "y", "scale", "width", "height", "flags", "_free",
+                 "_used")
+
+    def __init__(self) -> None:
+        #: Position. Fractional on purpose -- see ARCHITECTURE.md; rounding is
+        #: a rendering concern and happens nowhere else.
+        self.x = array("d")
+        self.y = array("d")
+        #: How much bigger than its image an object is drawn.
+        self.scale = array("d")
+        #: The image's size in whole pixels. Kept here so that a native pass
+        #: can work out what an object covers without reaching into Python.
+        self.width = array("i")
+        self.height = array("i")
+        #: ALIVE and VISIBLE.
+        self.flags = array("i")
+        self._free: list[int] = []
+        self._used = 0
+
+    def __len__(self) -> int:
+        """How many slots exist, used or not."""
+        return len(self.x)
+
+    @property
+    def live(self) -> int:
+        """How many slots hold an object that has not been destroyed."""
+        return sum(1 for flags in self.flags if flags & ALIVE)
+
+    def claim(self, x=0.0, y=0.0, width=0, height=0) -> int:
+        """Take a slot for a new object and return its number."""
+        if self._free:
+            slot = self._free.pop()
+            self.x[slot] = float(x)
+            self.y[slot] = float(y)
+            self.scale[slot] = 1.0
+            self.width[slot] = int(width)
+            self.height[slot] = int(height)
+            self.flags[slot] = ALIVE | VISIBLE
+            self._used += 1
+            return slot
+
+        slot = len(self.x)
+        self.x.append(float(x))
+        self.y.append(float(y))
+        self.scale.append(1.0)
+        self.width.append(int(width))
+        self.height.append(int(height))
+        self.flags.append(ALIVE | VISIBLE)
+        self._used += 1
+        return slot
+
+    def release(self, slot: int) -> None:
+        """Give a slot back, so a later object can have it.
+
+        The slot is marked dead first. Anything still holding the number sees
+        an object that is not alive rather than whatever moves in next -- and
+        handles check that they are alive before reading anything anyway.
+        """
+        if slot is None or not (0 <= slot < len(self.x)):
+            return
+        if not self.flags[slot] & ALIVE:
+            return
+        self.flags[slot] = 0
+        self._free.append(slot)
+        self._used -= 1
+
+    def clear(self) -> None:
+        """Forget every slot."""
+        for field in (self.x, self.y, self.scale):
+            del field[:]
+        for field in (self.width, self.height, self.flags):
+            del field[:]
+        self._free.clear()
+        self._used = 0
+
+    def __repr__(self) -> str:
+        return (f"ObjectTable({self._used} objects in {len(self.x)} slots)")
+
+
+class EngineState:
+    """Everything one run of a game knows.
+
+    Made by the application when a run begins and dropped when it ends, so
+    that state from one run cannot reach the next. Reached through
+    :func:`current`, never built by a game.
+    """
+
+    __slots__ = ("objects", "world", "drawings", "clock")
+
+    def __init__(self) -> None:
+        from trjoludus.scene import Scene
+        from trjoludus.ui import Ui
+
+        #: The numbers behind every object, shared with native code.
+        self.objects = ObjectTable()
+        #: Named objects. Holds the names and images; the numbers are in
+        #: :attr:`objects`.
+        self.world = Scene()
+        #: Drawing lists. Their numbers are still on the drawings themselves:
+        #: nothing native reads them yet, and inventing shared storage for a
+        #: reader that does not exist would be storage nobody uses.
+        self.drawings = Ui()
+        #: The clock a run is paced by. Lent by the application while it runs,
+        #: so that anything wanting "how long was the last frame" has one
+        #: place to ask. ``None`` outside a run.
+        self.clock = None
+
+    def __repr__(self) -> str:
+        return (f"EngineState({len(self.world)} objects, "
+                f"{len(self.drawings._lists)} drawing lists)")
+
+
+#: The state everything reads. Replaced when a run begins, never mutated into
+#: a different one, so anything holding the old one is holding a whole
+#: consistent world that simply is not current any more.
+#:
+#: Built on first use rather than at import: a state owns a scene and a set of
+#: drawing lists, and those modules import this one.
+_current: "EngineState | None" = None
+
+
+def current() -> EngineState:
+    """The engine state in use right now."""
+    global _current
+    if _current is None:
+        _current = EngineState()
+    return _current
+
+
+def begin_run(clock=None) -> EngineState:
+    """Lend a run's clock to the state, and return it.
+
+    Engine-internal. The state is *not* replaced here, on purpose: objects and
+    drawing lists made before ``run()`` take part in that run, which is
+    behaviour games have relied on since Milestone 2. Isolation between runs
+    comes from :func:`end_run` instead -- what a run leaves behind is dropped
+    when it finishes, so the next one starts empty either way.
+    """
+    state = current()
+    state.clock = clock
+    return state
+
+
+def end_run() -> None:
+    """Drop the state a run was using.
+
+    Engine-internal. What follows is a fresh, empty state -- a new world, new
+    drawing lists and a new object table -- so nothing a game kept from one
+    run can reach the next. Reading the scene afterwards is not an error; it
+    shows nothing, which is what it showed before the run started.
+    """
+    global _current
+    _current = EngineState()

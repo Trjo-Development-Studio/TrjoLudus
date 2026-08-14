@@ -603,6 +603,16 @@ Ordered by severity.
 | 2026-08-23 | Saying "rendering" is not enough to be the renderer | A subsystem gets to say whether it can actually start, and the renderer checks that every function it needs is really exported. A half-built library is caught at resolution rather than on the first frame |
 | 2026-08-23 | The Python renderer stays, as the reference | It is what the Rust one is tested against, byte for byte. Deleting it would leave the native renderer with nothing to be compared to, and leave every platform without a native build with no renderer at all |
 | 2026-08-23 | `clear` and `fill_rect` fill by copying, not per pixel | Measured first: a per-pixel loop in Rust was *slower* at clearing than Python's `pixels[:] = pattern * count`, which is one C-level fill. Doubling a filled region with `copy_within` turns it into memcpy. The only optimisation in this milestone, made after correctness was proved and because a measurement asked for it |
+| 2026-08-24 | An object's numbers live in a shared table, not on the object | One copy, read by Python and by native code. The alternative -- a Python position and a Rust position kept in step -- is the bug this design exists to make impossible, and it is a bug that only shows up once two subsystems disagree |
+| 2026-08-24 | Struct of arrays, not array of structs | A pass over every position wants a contiguous run of doubles, not every eighth field of a record. It costs nothing today and is the difference between a tight loop and a strided one later |
+| 2026-08-24 | A whole position still reads as a whole number | The table stores doubles, so `obj.x` would have started returning `100.0` where it returned `100`. A game printing a position in its HUD would have seen the difference. The property hands back an `int` when the value is whole, so the storage changed and what a game sees did not |
+| 2026-08-24 | Native code may move objects, and may not create or destroy them | Moving is a change to an object that already exists; creating is a decision about what the world contains. Leaving that to Python keeps one place where the world is decided, which is what stops a future AI writing directly into engine memory |
+| 2026-08-24 | The world view is rebuilt per call, not cached | Python's `array` reallocates as it grows, so a pointer kept from before an object was created would address a freed block. Rebuilding six pointers is cheap; a dangling one is not |
+| 2026-08-24 | An empty world is a world | Python's arrays have no allocation until something is in them, so their pointers are null while a game has created nothing -- and `from_raw_parts` on null is undefined behaviour even for a length of zero. The boundary answers "no objects" rather than "null pointer" |
+| 2026-08-24 | The engine state is replaced when a run ends, not when one starts | Objects created before `run()` have taken part in that run since Milestone 2, and games rely on it. Isolation comes from dropping what a run leaves behind, which is where it always came from |
+| 2026-08-24 | Table-backed attributes cost about 80ns more than a slot | Measured: 36ns to 116ns for a read. About 0.1ms a frame for five hundred objects moved once each, against a 4ms frame. That is the price of there being one copy of a position, and it is worth it |
+| 2026-08-24 | Image pixels are lent, not copied, to the renderer | `ctypes` hands a `bytes` straight to a `char *` parameter. Wrapping it in an array type instead copied the whole image on every draw call -- 7 microseconds for a 256 KB sprite, once per object per frame |
+| 2026-08-24 | ABI 3 adds the world, and the version check proved itself | Bumping it made the loader refuse the new library against the old Python with both numbers named, which is exactly what the check is for. Old and new are not compatible and do not pretend to be |
 | 2026-08-12 | The scene is cleared when a run finishes | The objects belonged to that run. Leaving them would make a second `run()` inherit the first game's scene and collide on every name; anything created before a run still takes part in it |
 | 2026-08-12 | One conformance suite runs the same contract assertions against every backend | A platform abstraction is only real if the layers above cannot tell which backend is underneath. Backends that cannot run on the current machine are skipped, never mocked -- a fake window server would agree with a wrong implementation |
 | 2026-08-12 | Tutorial code may use the public API only | No `trjoludus.platform`, no `ctypes`, no private internals. A lesson that cannot be written without reaching past the public API is evidence the public API is unfinished, and the fix belongs in the engine. `examples/window_test.py` currently breaks this rule out of necessity and is therefore classified as an engine smoke test, to be replaced by a real first lesson once backend selection exists |
@@ -707,7 +717,77 @@ has been measured and found too slow. This section is a map, not a plan.
 
 ---
 
-## 12. The native boundary
+## 12. Shared engine state
+
+Rendering, and every native subsystem after it, has to work on *the* game
+world rather than on a copy of it. This section is how.
+
+### The rule
+
+There is one authoritative copy of anything. Rendering, physics and collision
+read the same number; they do not each keep one that is supposed to agree.
+
+### Where state lives
+
+| State | Owner | Authoritative | Crosses to native? |
+| --- | --- | --- | --- |
+| object position, scale, size, flags | `engine.ObjectTable` | the table | borrowed, not copied |
+| object name, image, animator | `scene.SceneObject` | Python | image pixels borrowed per draw |
+| the scene | `engine.EngineState.world` | Python | no |
+| drawing lists | `engine.EngineState.drawings` | Python | no -- nothing native reads them yet |
+| timing | `clock.Clock`, lent to the state | Python | no |
+| input queue, held keys, pointer | the running `Application` | Python | no |
+| frame buffer | `Framebuffer` / `NativeFramebuffer` | Python's `bytearray` | borrowed per call |
+| backend choice | `native.registry` | Python, process-scoped | no |
+
+An object's numbers are *in the table*. `obj.x` reads it and native code reads
+it, so there is nothing to synchronise -- not because synchronisation is done
+well, but because there is only one copy to begin with.
+
+### Struct of arrays
+
+One array per field, not one record per object. A pass over every position
+touches a contiguous run of doubles instead of striding over sizes and flags
+it does not want, and it stays the right shape if any of it is ever
+vectorised.
+
+### Ownership
+
+Python allocates every array, Python frees it, native code borrows it for the
+length of one call and keeps nothing. That is the renderer's rule applied to
+the world, and it is why there is nothing to leak: this library allocates
+nothing Python must free.
+
+The view is rebuilt per call, because an `array` reallocates when it grows and
+a pointer taken before an object was created would address the old block.
+
+### What native code may change
+
+Positions. Nothing else, and only through `trjoludus_world_set_position`.
+Creating and destroying objects belongs to Python: a subsystem that could
+conjure them would be a second place where the world is decided.
+
+### Lifetime
+
+| Moment | What happens |
+| --- | --- |
+| import | nothing; the state is built on first use |
+| objects created before `run()` | take part in that run, as they always have |
+| `run()` starts | the run's clock is lent to the state |
+| `run()` ends, however it ends | the state is replaced: new world, new drawing lists, new table |
+| a second `run()` | starts empty |
+| `rendering.engine` | *not* part of it; configuration outlives runs on purpose |
+
+### Threading
+
+Single-threaded, and assumed so. Nothing is guarded, and a native call borrows
+the arrays for its duration, so another thread mutating the scene during one
+would be a data race. No part of the engine starts a thread, and no claim of
+thread safety is made because none has been tested.
+
+---
+
+## 13. The native boundary
 
 Milestone 3.0 built the architecture that lets subsystems move to Rust. No
 subsystem has moved; this section is the shape they will move into.

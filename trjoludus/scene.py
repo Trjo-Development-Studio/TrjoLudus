@@ -20,6 +20,7 @@ through it acts on what the engine is actually drawing, and a future
 
 from math import isfinite
 
+from trjoludus import engine
 from trjoludus.animation import DEFAULT_FPS, Animator
 from trjoludus.image import load_image
 from trjoludus.errors import TrjoLudusError
@@ -41,6 +42,17 @@ class SceneError(TrjoLudusError):
     """Raised when a named object is missing, duplicated, or invalid."""
 
 
+def _whole_if_it_can(value: float):
+    """A whole number as an ``int``, anything else unchanged.
+
+    Positions are stored as doubles so that native code can read a contiguous
+    run of them. Handing every one back as a float would change what a game
+    sees when it prints a position, which is a visible difference for a
+    storage decision nobody asked about.
+    """
+    return int(value) if value.is_integer() else value
+
+
 class SceneObject:
     """One drawable thing the engine owns.
 
@@ -48,18 +60,16 @@ class SceneObject:
     them and :class:`GameObject` reaches them.
     """
 
-    __slots__ = ("name", "image", "x", "y", "scale", "visible", "removed",
-                 "animator")
+    __slots__ = ("name", "_image", "removed", "animator", "_table", "_slot")
 
-    def __init__(self, name: str, image, x: int, y: int) -> None:
+    def __init__(self, name: str, image, x: int, y: int, table=None) -> None:
         self.name = name
-        self.image = image
-        self.x = x
-        self.y = y
-        #: How much bigger than its image the object is drawn. 1.0 is the
-        #: image's own size.
-        self.scale = 1.0
-        self.visible = True
+        # The numbers live in the engine's object table, not here. That is
+        # what makes "the position" one thing rather than one per system --
+        # anything native reads the very doubles these properties write.
+        self._table = engine.current().objects if table is None else table
+        self._slot = self._table.claim(x, y, image.width, image.height)
+        self._image = image
         #: Set when the object leaves the scene. Handles check it so that
         #: using one afterwards is an error rather than a silent no-op.
         self.removed = False
@@ -67,10 +77,76 @@ class SceneObject:
         #: here rather than on a handle, so every handle sees the same thing.
         self.animator = Animator(self)
 
+    # --- the numbers, which live in the table ----------------------------
+
+    @property
+    def x(self):
+        """Distance in pixels from the left edge. May be fractional.
+
+        The table stores doubles, because that is what a native pass wants to
+        read. A position that happens to be whole still reads as a whole
+        number, so a game showing ``f"x {player.x}"`` sees ``100`` rather than
+        ``100.0`` -- the storage changed underneath, and what a game sees did
+        not.
+        """
+        return _whole_if_it_can(self._table.x[self._slot])
+
+    @x.setter
+    def x(self, value) -> None:
+        self._table.x[self._slot] = float(value)
+
+    @property
+    def y(self):
+        """Distance in pixels from the top edge. May be fractional."""
+        return _whole_if_it_can(self._table.y[self._slot])
+
+    @y.setter
+    def y(self, value) -> None:
+        self._table.y[self._slot] = float(value)
+
+    @property
+    def scale(self) -> float:
+        """How much bigger than its image the object is drawn."""
+        return self._table.scale[self._slot]
+
+    @scale.setter
+    def scale(self, value) -> None:
+        self._table.scale[self._slot] = float(value)
+
+    @property
+    def visible(self) -> bool:
+        """Whether the engine draws this object."""
+        return bool(self._table.flags[self._slot] & engine.VISIBLE)
+
+    @visible.setter
+    def visible(self, value) -> None:
+        flags = self._table.flags[self._slot]
+        if value:
+            self._table.flags[self._slot] = flags | engine.VISIBLE
+        else:
+            self._table.flags[self._slot] = flags & ~engine.VISIBLE
+
+    @property
+    def image(self):
+        """The picture this object is drawn with."""
+        return self._image
+
+    @image.setter
+    def image(self, value) -> None:
+        # The size goes into the table too: what an object covers is
+        # something a native pass has to be able to work out on its own.
+        self._image = value
+        self._table.width[self._slot] = value.width
+        self._table.height[self._slot] = value.height
+
+    def _release(self) -> None:
+        """Give the table slot back. Called when the object leaves a scene."""
+        self._table.release(self._slot)
+
     def __repr__(self) -> str:
         return (
             f"SceneObject({self.name!r}, at=({self.x}, {self.y}), "
-            f"size={self.image.size}, scale={self.scale})"
+            f"size={self._image.size}, scale={self.scale})"
         )
 
 
@@ -137,6 +213,7 @@ class Scene:
         if removed is None:
             raise SceneError(self._missing_message(name))
         removed.removed = True
+        removed._release()
 
     def advance_animations(self, seconds: float) -> None:
         """Move every playing animation on by one frame's worth of time.
@@ -152,6 +229,7 @@ class Scene:
         """Forget every object."""
         for obj in self._objects.values():
             obj.removed = True
+            obj._release()
         self._objects.clear()
 
     def _missing_message(self, name: str) -> str:
@@ -168,17 +246,14 @@ class Scene:
         )
 
 
-_current = Scene()
-
-
 def current_scene() -> Scene:
     """The scene new objects go into and the engine draws.
 
-    There is one scene per process. An application clears it when a run
-    finishes, so a second :func:`trjoludus.run` does not inherit the first
-    game's objects; anything created before a run still takes part in it.
+    The scene belongs to the engine state, which a run replaces -- so a second
+    :func:`trjoludus.run` does not inherit the first game's objects, and
+    anything created before a run still takes part in it.
     """
-    return _current
+    return engine.current().world
 
 
 def _check_pixels(label: str, value):

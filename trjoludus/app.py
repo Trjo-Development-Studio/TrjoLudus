@@ -42,7 +42,7 @@ from trjoludus.events import (
 )
 from trjoludus.keyboard import KeyboardState
 from trjoludus.mouse import MouseState
-from trjoludus import rendering
+from trjoludus import engine, rendering
 from trjoludus.scene import current_scene
 from trjoludus.ui import current_ui
 
@@ -219,6 +219,10 @@ class Application:
         previous, _running = _running, self
         try:
             width, height = self._size
+            # A fresh engine state for this run: an empty world, empty drawing
+            # lists, and this run's clock. What the last run left behind is
+            # dropped rather than inherited.
+            engine.begin_run(self._clock)
             # Which renderer draws is settled here, once, before anything has
             # drawn a frame -- so a run cannot be half on one and half on the
             # other.
@@ -282,6 +286,9 @@ class Application:
                         # them would then collide.
                         current_scene().clear()
                         current_ui().clear()
+                        # And the state itself goes, so nothing a game kept
+                        # can reach the next run's world.
+                        engine.end_run()
 
     def _loop(self, window) -> None:
         """Run frames until the game asks to stop."""
