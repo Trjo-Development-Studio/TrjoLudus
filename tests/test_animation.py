@@ -22,7 +22,7 @@ from trjoludus.animation import DEFAULT_FPS, AnimationError
 from trjoludus.app import Application
 from trjoludus.errors import TrjoLudusWarning
 from trjoludus.platform.null import NullBackend
-from trjoludus.render import DEFAULT_CLEAR_COLOUR, Framebuffer
+from trjoludus.rendering_python import DEFAULT_CLEAR_COLOUR, Framebuffer
 from trjoludus.scene import SceneError, current_scene
 from trjoludus.ui import current_ui
 

@@ -1,7 +1,7 @@
 """Tests for changing a drawing after it has been made.
 
 Two kinds of checking happen here. Most tests draw into a
-:class:`~trjoludus.render.Framebuffer` and count pixels, because that is where
+:class:`~trjoludus.rendering_python.Framebuffer` and count pixels, because that is where
 a change either happened or did not. The rest run a real game on the null
 backend and read the frames it handed to the window, which proves a change
 made in ``on_update`` reaches the screen on the very next frame rather than
@@ -17,7 +17,7 @@ from trjoludus.app import Application
 from trjoludus.events import MouseButtonPressed, MouseMoved
 from trjoludus.platform.null import NullBackend
 from trjoludus import ui as ui_module
-from trjoludus.render import DEFAULT_CLEAR_COLOUR, Framebuffer
+from trjoludus.rendering_python import DEFAULT_CLEAR_COLOUR, Framebuffer
 from trjoludus.ui import UiError, current_ui
 
 

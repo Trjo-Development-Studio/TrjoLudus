@@ -21,7 +21,7 @@ from trjoludus.events import (
 )
 from trjoludus.image import ImageError, decode_png
 from trjoludus.platform.null import NullBackend
-from trjoludus.render import DEFAULT_CLEAR_COLOUR, Framebuffer
+from trjoludus.rendering_python import DEFAULT_CLEAR_COLOUR, Framebuffer
 from trjoludus.scene import SceneError, current_scene
 from trjoludus.ui import UiError, current_ui
 

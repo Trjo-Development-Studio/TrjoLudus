@@ -20,7 +20,7 @@ from trjoludus.app import Application
 from trjoludus.clock import Clock
 from trjoludus.image import Image
 from trjoludus.platform.null import NullBackend
-from trjoludus.render import DEFAULT_CLEAR_COLOUR, Framebuffer
+from trjoludus.rendering_python import DEFAULT_CLEAR_COLOUR, Framebuffer
 from trjoludus.scene import GameObject, SceneObject, current_scene
 from trjoludus.ui import current_ui
 

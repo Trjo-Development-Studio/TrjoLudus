@@ -14,7 +14,7 @@ import zlib
 from pathlib import Path
 
 from trjoludus.image import Image, ImageError, decode_png, load_image
-from trjoludus.render import DEFAULT_CLEAR_COLOUR, Framebuffer
+from trjoludus.rendering_python import DEFAULT_CLEAR_COLOUR, Framebuffer
 
 
 def build_png(width, height, pixels, colour_type=6, palette=b"",

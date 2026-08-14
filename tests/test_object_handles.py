@@ -17,7 +17,7 @@ from trjoludus import Game, GameObject, create
 from trjoludus.app import Application
 from trjoludus.image import Image
 from trjoludus.platform.null import NullBackend
-from trjoludus.render import DEFAULT_CLEAR_COLOUR, Framebuffer
+from trjoludus.rendering_python import DEFAULT_CLEAR_COLOUR, Framebuffer
 from trjoludus.scene import SceneError, SceneObject, current_scene
 from trjoludus.ui import current_ui
 

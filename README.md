@@ -74,7 +74,7 @@ trjoludus/
     input.py           what the waiting calls can wait for, and input.wait()
     scene.py           named game objects and the scene holding them
     image.py           images, and PNG decoding
-    render.py          the frame buffer objects are composited into
+    rendering_python.pythe frame buffer objects are composited into
     errors.py          exception hierarchy
     events.py          platform-neutral event types
     clock.py           frame timing
@@ -94,7 +94,11 @@ tests/                 stdlib unittest suite
 
 ## Requirements
 
-Python 3.11 or newer. Nothing else.
+**To make games with TrjoLudus:** Python 3.11 or newer. Nothing else. There is
+no Rust to install, and nothing to compile.
+
+**To work on TrjoLudus itself:** Python 3.11+, and the Rust toolchain if you
+are touching the native side. See [Development](#development).
 
 ## Usage
 
@@ -627,6 +631,30 @@ that the engine is *correct*. It grows as engine features land.
 
 ## Development
 
+This section is for people working on the engine. **If you are making a game,
+you do not need any of it** -- see [Requirements](#requirements).
+
+### What you need
+
+| | Making a game | Working on TrjoLudus |
+| --- | --- | --- |
+| Python 3.11+ | required | required |
+| `rustc` and `cargo` | **not needed** | needed for the native side |
+
+TrjoLudus is a Python engine that *can* use a native library, not a Python
+wrapper around a Rust one. An installed TrjoLudus runs entirely on Python and
+never needs a compiler. The Rust toolchain is a contributor's tool.
+
+Install it with [rustup](https://rustup.rs) if you need it:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustc --version
+cargo --version
+```
+
+### Tests
+
 ```sh
 python -m unittest discover -s tests
 ```
@@ -642,6 +670,20 @@ env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u XDG_SESSION_TYPE \
 
 That run should report skips. If it reports none, a test found a display it
 should not have.
+
+The native side has its own tests, and they are separate:
+
+```sh
+cd rust
+cargo build
+cargo test
+```
+
+The Python suite passes whether or not a native library has been built. Three
+tests skip when there is none, and a different three skip when there is one --
+both states are supported, because a contributor who has never run `cargo` must
+be able to run the suite. See [`rust/README.md`](rust/README.md) for how to
+build the library and where to put it.
 
 ## Advanced: choosing a backend
 

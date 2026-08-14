@@ -36,8 +36,11 @@ version = { attr = "trjoludus.__version__" }
 [tool.setuptools.packages.find]
 include = ["trjoludus*"]
 
-# A built native library, if there is one. TrjoLudus installs and runs without
-# it -- every subsystem falls back to Python -- so this ships whatever happens
-# to be built rather than requiring anything. See rust/README.md.
-[tool.setuptools.package-data]
-"trjoludus.native" = ["lib/*.so", "lib/*.dll", "lib/*.dylib"]
+# A built native library is deliberately NOT packaged here. The wheel this
+# builds is tagged py3-none-any -- pure Python, any platform -- and a wheel
+# saying that must not contain an x86-64 Linux shared object. Shipping native
+# code means platform-tagged wheels built per target, which is work for the
+# milestone that first has native code worth shipping.
+#
+# Until then a native library is a local build artefact: see rust/README.md.
+# TrjoLudus installs and runs without one, with every subsystem on Python.

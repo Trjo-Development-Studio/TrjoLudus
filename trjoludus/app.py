@@ -42,7 +42,7 @@ from trjoludus.events import (
 )
 from trjoludus.keyboard import KeyboardState
 from trjoludus.mouse import MouseState
-from trjoludus.render import Framebuffer
+from trjoludus.rendering_python import Framebuffer
 from trjoludus.scene import current_scene
 from trjoludus.ui import current_ui
 

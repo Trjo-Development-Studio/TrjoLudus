@@ -385,14 +385,205 @@ class TestConfigurationTiming(BackendTestCase):
         self.assertEqual(registry.system("rendering").resolve(), PYTHON)
 
 
+class TestSettingsPersist(BackendTestCase):
+    """A choice lasts until the developer changes it, and no longer."""
+
+    def test_a_new_game_instance_does_not_reset_it(self):
+        rendering.engine = RUST
+
+        class First(Game):
+            def on_update(self, dt):
+                self.quit()
+
+        class Second(Game):
+            def on_update(self, dt):
+                self.quit()
+
+        Application(First(), size=(40, 30), max_fps=None,
+                    backend=NullBackend()).run()
+        self.assertEqual(rendering.engine, RUST)
+        Application(Second(), size=(40, 30), max_fps=None,
+                    backend=NullBackend()).run()
+        self.assertEqual(rendering.engine, RUST,
+                         "a new Game instance reset the configuration")
+
+    def test_constructing_an_application_does_not_reset_it(self):
+        physics.engine = PYTHON
+        Application(Game(), size=(40, 30), max_fps=None,
+                    backend=NullBackend())
+        self.assertEqual(physics.engine, PYTHON)
+
+    def test_a_run_that_raised_does_not_reset_it(self):
+        image.engine = PYTHON
+
+        class Breaking(Game):
+            def on_update(self, dt):
+                raise RuntimeError("boom")
+
+        with self.assertRaises(RuntimeError):
+            Application(Breaking(), size=(40, 30), max_fps=None,
+                        backend=NullBackend()).run()
+        self.assertEqual(image.engine, PYTHON)
+
+    def test_several_runs_keep_every_setting(self):
+        rendering.engine = PYTHON
+        animation.engine = RUST
+        physics.engine = PYTHON
+
+        class G(Game):
+            def on_update(self, dt):
+                self.quit()
+
+        game = G()
+        for _ in range(3):
+            Application(game, size=(40, 30), max_fps=None,
+                        backend=NullBackend()).run()
+        self.assertEqual(
+            (rendering.engine, animation.engine, physics.engine),
+            (PYTHON, RUST, PYTHON),
+        )
+
+    def test_nothing_in_the_engine_writes_a_setting(self):
+        """Only a developer sets these; the engine only reads them."""
+        import ast
+        import pathlib as _pathlib
+
+        root = _pathlib.Path(__file__).parent.parent / "trjoludus"
+        writers = []
+        for path in sorted(root.rglob("*.py")):
+            if path.parent.name == "native":
+                continue          # the registry is where the value lives
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if (isinstance(target, ast.Attribute)
+                                and target.attr == "engine"):
+                            writers.append(path.name)
+        self.assertEqual(writers, [], "the engine assigns to a .engine")
+
+    def test_availability_is_asked_again_each_time(self):
+        """A resolver that cached would answer for a library long gone."""
+        self.pretend("rendering")
+        self.assertTrue(registry.system("rendering").available())
+        self.pretend_nothing()
+        self.assertFalse(registry.system("rendering").available())
+        self.pretend("rendering")
+        self.assertTrue(registry.system("rendering").available())
+
+
+class TestTheWildcardImport(BackendTestCase):
+    """``from trjoludus import *`` is the whole public API and no more."""
+
+    def star_import(self):
+        namespace = {}
+        exec("from trjoludus import *", namespace)
+        namespace.pop("__builtins__", None)
+        return namespace
+
+    def test_it_gives_exactly_what_is_public(self):
+        import trjoludus
+
+        self.assertEqual(set(self.star_import()), set(trjoludus.__all__))
+
+    def test_everything_a_game_needs_is_there(self):
+        names = self.star_import()
+        for needed in ("Game", "run", "create", "draw", "color", "keyboard",
+                       "mouse", "input", "key", "time", "GameObject"):
+            with self.subTest(name=needed):
+                self.assertIn(needed, names)
+
+    def test_no_internals_come_with_it(self):
+        names = self.star_import()
+        for internal in ("Framebuffer", "Scene", "Clock", "Animator",
+                         "System", "library", "registry", "expose",
+                         "native", "ctypes", "MouseState", "KeyboardState",
+                         "PendingInput"):
+            with self.subTest(name=internal):
+                self.assertNotIn(internal, names)
+
+    def test_no_name_speaks_of_the_implementation(self):
+        for name in self.star_import():
+            with self.subTest(name=name):
+                lowered = name.lower()
+                for word in ("rust", "ffi", "native", "cdll", "ctypes",
+                             "pointer", "handle", "abi"):
+                    self.assertNotIn(word, lowered)
+
+    def test_nothing_exported_is_a_ctypes_object(self):
+        import ctypes
+
+        for name, value in self.star_import().items():
+            with self.subTest(name=name):
+                self.assertNotIsInstance(value, ctypes.CDLL)
+                self.assertFalse(
+                    type(value).__module__.startswith("ctypes"),
+                    f"{name} is a ctypes object",
+                )
+
+    def test_the_subsystem_modules_come_with_it(self):
+        names = self.star_import()
+        for system_name in MODULES:
+            with self.subTest(system=system_name):
+                self.assertIn(system_name, names)
+                self.assertEqual(names[system_name].engine, AUTO)
+
+
 class TestTheLibraryLoader(BackendTestCase):
-    def test_nothing_is_loaded_in_this_checkout(self):
-        """Honest about where this actually runs: no library is built."""
+    """The real loader, against whatever this checkout actually has.
+
+    A contributor who has run ``cargo build`` has a library; one who has not
+    does not, and both must pass. So these assert that the loader is
+    *consistent* with what is on disk rather than assuming either state --
+    which is also the only way to notice a library that half-loads.
+    """
+
+    def test_the_loader_agrees_with_what_is_on_disk(self):
         library.forget()
-        self.assertFalse(library.loaded())
-        self.assertIsNone(library.version())
-        self.assertIsNone(library.library_path())
-        self.assertIn("no native library found", library.problem())
+        built = [name for name in library.LIBRARY_NAMES
+                 if (library.search_directory() / name).is_file()]
+
+        if built:
+            self.assertTrue(library.loaded(),
+                            f"{built} is on disk but did not load: "
+                            f"{library.problem()}")
+            self.assertEqual(library.version(), library.ABI_VERSION)
+            self.assertIsNone(library.problem())
+            self.assertEqual(library.library_path().parent,
+                             library.search_directory())
+        else:
+            self.assertFalse(library.loaded())
+            self.assertIsNone(library.version())
+            self.assertIsNone(library.library_path())
+            self.assertIn("no native library found", library.problem())
+
+    def test_a_built_library_implements_nothing_yet(self):
+        """Milestone 3.0.1 builds the crate; it still implements nothing."""
+        library.forget()
+        if not library.loaded():
+            self.skipTest("no native library built in this checkout")
+        for name in MODULES:
+            with self.subTest(system=name):
+                self.assertFalse(
+                    library.implements(name),
+                    f"the native library claims to implement {name}, but no "
+                    f"subsystem has been migrated",
+                )
+
+    def test_auto_still_chooses_python_with_the_real_library(self):
+        library.forget()
+        if not library.loaded():
+            self.skipTest("no native library built in this checkout")
+        self.assertEqual(registry.system("rendering").resolve(), PYTHON)
+
+    def test_explicit_rust_still_fails_with_the_real_library(self):
+        library.forget()
+        if not library.loaded():
+            self.skipTest("no native library built in this checkout")
+        rendering.engine = RUST
+        with self.assertRaises(EngineError) as caught:
+            registry.system("rendering").resolve()
+        self.assertIn("does not implement it yet", str(caught.exception))
 
     def test_it_looks_beside_the_package(self):
         self.assertEqual(library.search_directory().name, "lib")
@@ -410,6 +601,25 @@ class TestTheLibraryLoader(BackendTestCase):
         for name in MODULES:
             with self.subTest(system=name):
                 self.assertFalse(library.implements(name))
+
+    def test_a_file_that_is_not_a_library_is_refused(self):
+        """Now testable for real: something that is not a shared object."""
+        import tempfile
+
+        folder = library.search_directory()
+        already = [name for name in library.LIBRARY_NAMES
+                   if (folder / name).is_file()]
+        if already:
+            self.skipTest("a real library is built here")
+
+        folder.mkdir(parents=True, exist_ok=True)
+        broken = folder / library.LIBRARY_NAMES[0]
+        broken.write_bytes(b"this is not a shared object")
+        self.addCleanup(broken.unlink)
+
+        library.forget()
+        self.assertFalse(library.loaded())
+        self.assertIn("could not be loaded", library.problem())
 
     def test_the_signatures_are_declared_with_both_types(self):
         """The rule that keeps 64-bit handles from being truncated."""

@@ -13,6 +13,10 @@ venv/
 .coverage
 htmlcov/
 
+# Rust build output. The crate builds into here; nothing in it is committed,
+# and a built library is copied to trjoludus/native/lib/ by hand.
+rust/target/
+
 .idea/
 .vscode/
 *.swp

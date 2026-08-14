@@ -16,11 +16,23 @@ and put the Python C API in the middle of the engine's hot path. A C ABI keeps
 the engine installable as pure Python, keeps the library buildable once, and
 keeps the boundary something anything with a C FFI could call.
 
+## What you need
+
+The stable Rust toolchain. [rustup](https://rustup.rs) is the usual way:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Verified against **rustc 1.97.1 / cargo 1.97.1** on Linux. The crate has no
+dependencies, so any recent stable toolchain should do.
+
 ## Building it
 
 ```sh
 cd rust
 cargo build --release
+cargo test
 ```
 
 Then put the result where TrjoLudus looks for it:
@@ -43,7 +55,12 @@ library.library_path()  # .../trjoludus/native/lib/libtrjoludus_native.so
 library.problem()       # None, or why there is no library
 ```
 
-Run the Rust tests with `cargo test`.
+The library is **not** shipped in the wheel. That wheel is tagged
+`py3-none-any` -- pure Python, any platform -- and a wheel claiming that must
+not contain an x86-64 Linux shared object. Shipping native code means
+platform-tagged wheels built per target, which is work for the milestone that
+first has native code worth shipping. Until then a built library is a local
+artefact, and `trjoludus/native/lib/` is gitignored.
 
 ## What is in it
 

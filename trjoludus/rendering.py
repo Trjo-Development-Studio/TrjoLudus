@@ -1,7 +1,7 @@
 """Turning what a game says into pixels.
 
 The system, not the implementation. Today the implementation is
-:class:`trjoludus.render.Framebuffer` -- pure Python, one pixel
+:class:`trjoludus.rendering_python.Framebuffer` -- pure Python, one pixel
 at a time -- and this module is where the choice between that and
 a native one is made.
 
@@ -29,4 +29,4 @@ __all__ = ["engine"]
 engine: str
 
 expose(__name__, always_native=True,
-       python_implementation="trjoludus.render")
+       python_implementation="trjoludus.rendering_python")

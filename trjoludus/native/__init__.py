@@ -91,7 +91,7 @@ def expose(module_name: str, *, always_native: bool,
     is defined::
 
         expose(__name__, always_native=True,
-               python_implementation="trjoludus.render")
+               python_implementation="trjoludus.rendering_python")
 
     Args:
         module_name: ``__name__`` of the calling module. Its last component is

@@ -12,7 +12,7 @@ from trjoludus import Game, color, draw
 from trjoludus.app import Application
 from trjoludus.font import CHARACTER_HEIGHT, CHARACTER_WIDTH, columns_for, measure
 from trjoludus.platform.null import NullBackend
-from trjoludus.render import DEFAULT_CLEAR_COLOUR, Framebuffer
+from trjoludus.rendering_python import DEFAULT_CLEAR_COLOUR, Framebuffer
 from trjoludus.ui import DrawList, UiError, current_ui
 
 
