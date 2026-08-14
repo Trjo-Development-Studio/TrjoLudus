@@ -362,6 +362,14 @@ player.set.x(250)    # put it exactly there
 player.move.x(50)    # and now 50 pixels further right
 ```
 
+Every absolute setter can also be assigned, which is the same operation
+written the other way:
+
+```python
+player.set.x = 250
+player.set.scale = 1.25
+```
+
 `set.x` and `set.y` set an **absolute** position. `move.x` and `move.y` change
 it **relative** to wherever the object is now, so calls add up: two
 `move.x(50)` calls move it 100 pixels in total. Negative values move left and
@@ -371,6 +379,47 @@ This is the same spelling drawings use, so one way of saying "put this here"
 works on everything with a position. Assigning `player.x = 250` does the same
 thing and still works; `set.x` is the spelling that reads the same next to
 `move.x`.
+
+### Objects by name
+
+`create.image(...)` makes an object and files it under a name.
+`GameObject(name)` looks that name up -- it never makes a second object:
+
+```python
+create.image(100, 100, "player.png", "player")
+
+GameObject("player").move.x(50)
+GameObject("player").set.scale(1.25)
+```
+
+A handle is a way of *reaching* an object, not the object itself, so you do
+not have to keep one in a variable, and every handle to a name reaches the
+same thing. Keeping one is still the shorter way to write it:
+
+```python
+player = GameObject("player")
+player.move.x(50)
+```
+
+`destroy()` removes the object for good, through any handle. Every other
+handle to it stops working at that moment, so nothing can go on moving
+something that is gone.
+
+### Making an object bigger
+
+```python
+player.set.scale(2)        # twice the size of its image
+player.add.scale(0.25)     # a quarter bigger than it is now
+player.remove.scale(0.25)  # and back
+```
+
+Scale grows an object from its top-left corner, which is where its position
+already is, so scaling never moves what you placed. `size` then reports the
+size it is drawn at, not the image's own size.
+
+Images are scaled by nearest-neighbour: each drawn pixel takes the colour of
+the source pixel it lands on. That keeps pixel art crisp instead of blurring
+it, which is what a 2D engine usually wants.
 
 ### Running without a window
 

@@ -65,15 +65,32 @@ def _scale_factor(value, label: str = "a scale") -> float:
 class _Setter:
     """``set``: give a drawing an exact new value.
 
+    Each value can be called or assigned, and the two are the same operation
+    written two ways::
+
+        button.set.x(200)
+        button.set.x = 200
+
     Only the properties that mean something for a given drawing are allowed.
     Asking a rectangle for its text is a mistake worth hearing about, not
-    something to quietly ignore.
+    something to quietly ignore -- and that stays true of the assignment form,
+    which routes to the same method and so raises the same error.
     """
 
     __slots__ = ("_drawable",)
 
+    #: What ``set.name = value`` accepts. Assignment calls the method of the
+    #: same name, so there is one implementation of each, not two.
+    _ASSIGNABLE = ("x", "y", "scale", "color", "text")
+
     def __init__(self, drawable: "Drawable") -> None:
         self._drawable = drawable
+
+    def __setattr__(self, name: str, value) -> None:
+        if name in self._ASSIGNABLE:
+            getattr(self, name)(value)
+            return
+        object.__setattr__(self, name, value)
 
     def x(self, pixels: int) -> "Drawable":
         """Put the drawing's left edge exactly ``pixels`` from the left."""

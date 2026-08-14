@@ -175,11 +175,24 @@ class Framebuffer:
                         self.set_pixel(pen + column, y + row, colour)
             pen += font.CHARACTER_WIDTH + font.SPACING
 
-    def draw_image(self, image, x: int, y: int) -> None:
+    def draw_image(self, image, x: int, y: int, scale: float = 1.0) -> None:
         """Composite an image with its top-left corner at ``(x, y)``.
 
         Anything falling outside the buffer is clipped, so an object may be
         partly or entirely off-screen without it being an error.
+
+        ``scale`` grows or shrinks the image from that same top-left corner,
+        so scaling never moves the corner it was placed at. A scale of 1 takes
+        the unscaled path below, byte for byte -- scaling is an extra route,
+        not a tax on every frame that does not use it.
+        """
+        if scale != 1.0:
+            self._draw_image_scaled(image, x, y, scale)
+            return
+        self._draw_image_unscaled(image, x, y)
+
+    def _draw_image_unscaled(self, image, x: int, y: int) -> None:
+        """Composite an image at its own size.
 
         Two paths, chosen by whether the image has any transparency. A fully
         opaque image is copied a row at a time, which is one slice assignment
@@ -220,6 +233,67 @@ class Framebuffer:
                 if alpha == 0:
                     continue
                 t = target_start + column * BYTES_PER_PIXEL
+                if alpha == 255:
+                    target[t:t + 4] = source[s:s + 4]
+                    continue
+                inverse = 255 - alpha
+                target[t] = (source[s] * alpha + target[t] * inverse) // 255
+                target[t + 1] = (
+                    source[s + 1] * alpha + target[t + 1] * inverse
+                ) // 255
+                target[t + 2] = (
+                    source[s + 2] * alpha + target[t + 2] * inverse
+                ) // 255
+                target[t + 3] = 255
+
+    def _draw_image_scaled(self, image, x: int, y: int,
+                           scale: float) -> None:
+        """Composite an image at a different size, nearest-neighbour.
+
+        Each destination pixel is asked which source pixel it lands on, which
+        keeps pixel art crisp instead of blurring it, costs no memory beyond
+        the frame, and cannot read outside the source: the index is derived
+        from the destination size, so it is always in range.
+
+        There is no fast path here. A scaled row is not a contiguous run of
+        source bytes, so the row-at-a-time copy an unscaled opaque image gets
+        has nothing to copy.
+        """
+        source_width, source_height = image.width, image.height
+        target_width = round(source_width * scale)
+        target_height = round(source_height * scale)
+        if target_width <= 0 or target_height <= 0:
+            return
+
+        # Clip in destination coordinates, then map back per pixel.
+        left = max(0, -x)
+        top = max(0, -y)
+        right = min(target_width, self._width - x)
+        bottom = min(target_height, self._height - y)
+        if left >= right or top >= bottom:
+            return
+
+        source = image.pixels
+        target = self._pixels
+        columns = [
+            ((column * source_width) // target_width) * BYTES_PER_PIXEL
+            for column in range(left, right)
+        ]
+
+        for row in range(top, bottom):
+            source_start = (
+                ((row * source_height) // target_height) * source_width
+                * BYTES_PER_PIXEL
+            )
+            target_start = (
+                (y + row) * self._width + x + left
+            ) * BYTES_PER_PIXEL
+            for offset, column in enumerate(columns):
+                s = source_start + column
+                alpha = source[s + 3]
+                if alpha == 0:
+                    continue
+                t = target_start + offset * BYTES_PER_PIXEL
                 if alpha == 255:
                     target[t:t + 4] = source[s:s + 4]
                     continue

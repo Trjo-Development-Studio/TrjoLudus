@@ -438,7 +438,8 @@ class Application:
 
         for obj in current_scene().objects():
             if obj.visible:
-                self._framebuffer.draw_image(obj.image, obj.x, obj.y)
+                self._framebuffer.draw_image(obj.image, obj.x, obj.y,
+                                            obj.scale)
 
         # UI last, so it sits on top of the game rather than behind it.
         current_ui().render(self._framebuffer)

@@ -24,6 +24,7 @@ __all__ = [
     "GameObject",
     "Movement",
     "Placement",
+    "Sizing",
     "Scene",
     "SceneError",
     "SceneObject",
@@ -42,13 +43,16 @@ class SceneObject:
     them and :class:`GameObject` reaches them.
     """
 
-    __slots__ = ("name", "image", "x", "y", "visible", "removed")
+    __slots__ = ("name", "image", "x", "y", "scale", "visible", "removed")
 
     def __init__(self, name: str, image, x: int, y: int) -> None:
         self.name = name
         self.image = image
         self.x = x
         self.y = y
+        #: How much bigger than its image the object is drawn. 1.0 is the
+        #: image's own size.
+        self.scale = 1.0
         self.visible = True
         #: Set when the object leaves the scene. Handles check it so that
         #: using one afterwards is an error rather than a silent no-op.
@@ -57,7 +61,7 @@ class SceneObject:
     def __repr__(self) -> str:
         return (
             f"SceneObject({self.name!r}, at=({self.x}, {self.y}), "
-            f"size={self.image.size})"
+            f"size={self.image.size}, scale={self.scale})"
         )
 
 
@@ -174,13 +178,37 @@ def _check_pixels(label: str, value) -> int:
     return value
 
 
+def _check_scale(value, label: str = "a scale") -> float:
+    """Reject anything that is not a usable scale.
+
+    The same rule drawings use: a positive number, and ``bool`` excluded
+    because ``True`` as a size is a mistake rather than an intention. Zero and
+    negatives are refused instead of quietly drawing nothing, which would look
+    like the engine losing the object.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"{label} must be a number, got {type(value).__name__}"
+        )
+    if value <= 0:
+        raise ValueError(
+            f"{label} must be greater than zero, got {value}. A scale of 1 is "
+            f"the image's own size."
+        )
+    return float(value)
+
+
 class Placement:
     """Puts one object at an exact place.
 
-    Reached as :attr:`GameObject.set`::
+    Reached as :attr:`GameObject.set`. Each value can be called or assigned,
+    and the two are the same operation written two ways::
 
         player.set.x(200)    # exactly 200 pixels from the left
-        player.set.y(100)    # exactly 100 pixels from the top
+        player.set.x = 200   # the same thing
+
+        player.set.scale(1.25)
+        player.set.scale = 1.25
 
     The same spelling drawings use, so one way of saying "put this here"
     works on everything that has a position. Assigning :attr:`GameObject.x`
@@ -190,8 +218,19 @@ class Placement:
 
     __slots__ = ("_owner",)
 
+    #: What ``set.name = value`` accepts. Assignment routes to the method of
+    #: the same name, so the two forms cannot drift apart -- there is one
+    #: implementation of each, not two.
+    _ASSIGNABLE = ("x", "y", "scale")
+
     def __init__(self, owner: "GameObject") -> None:
         self._owner = owner
+
+    def __setattr__(self, name: str, value) -> None:
+        if name in self._ASSIGNABLE:
+            getattr(self, name)(value)
+            return
+        object.__setattr__(self, name, value)
 
     def x(self, pixels: int) -> None:
         """Put the object's left edge exactly ``pixels`` from the left.
@@ -211,8 +250,59 @@ class Placement:
         """
         self._owner._live().y = _check_pixels("y", pixels)
 
+    def scale(self, amount) -> None:
+        """Draw the object at ``amount`` times its image's size.
+
+        1 is the image's own size. It grows from the top-left corner, which is
+        where the object's position already is, so scaling never moves what a
+        game placed.
+
+        Raises:
+            TypeError: If ``amount`` is not a number.
+            ValueError: If it is not greater than zero.
+            SceneError: If the object has been removed.
+        """
+        self._owner._live().scale = _check_scale(amount)
+
     def __repr__(self) -> str:
         return f"Placement({self._owner.name!r})"
+
+
+class Sizing:
+    """Grows or shrinks one object relative to how big it is now.
+
+    Reached as :attr:`GameObject.add` and :attr:`GameObject.remove`::
+
+        player.add.scale(0.25)
+        player.remove.scale(0.25)
+
+    Only scale is here. Relative position is ``move``, and relative anything
+    else would be a spelling without a meaning.
+    """
+
+    __slots__ = ("_owner", "_how", "_sign")
+
+    def __init__(self, owner: "GameObject", how: str) -> None:
+        self._owner = owner
+        self._how = how
+        self._sign = 1 if how == "add" else -1
+
+    def scale(self, amount) -> None:
+        """Grow or shrink by ``amount``, relative to the current scale.
+
+        Raises:
+            TypeError: If ``amount`` is not a number.
+            ValueError: If ``amount``, or the scale it would produce, is not
+                greater than zero.
+            SceneError: If the object has been removed.
+        """
+        obj = self._owner._live()
+        change = _check_scale(amount, f"an amount to {self._how}")
+        obj.scale = _check_scale(obj.scale + self._sign * change,
+                                 "the resulting scale")
+
+    def __repr__(self) -> str:
+        return f"Sizing({self._owner.name!r}, {self._how!r})"
 
 
 class Movement:
@@ -321,6 +411,16 @@ class GameObject:
         return Placement(self)
 
     @property
+    def add(self) -> Sizing:
+        """Grow this object: ``player.add.scale(0.25)``."""
+        return Sizing(self, "add")
+
+    @property
+    def remove(self) -> Sizing:
+        """Shrink this object: ``player.remove.scale(0.25)``."""
+        return Sizing(self, "remove")
+
+    @property
     def move(self) -> Movement:
         """Relative movement: ``player.move.x(50)``."""
         return self._move
@@ -380,9 +480,23 @@ class GameObject:
         return (obj.x, obj.y)
 
     @property
+    def scale(self) -> float:
+        """How much bigger than its image this is drawn. 1.0 is normal."""
+        return self._live().scale
+
+    @property
     def size(self) -> tuple[int, int]:
-        """``(width, height)`` of the object's image, in pixels."""
-        return self._live().image.size
+        """``(width, height)`` the object is drawn at, in pixels.
+
+        This is the image's size once :attr:`scale` has been applied, because
+        it answers "how big is this on screen" -- which is the question a game
+        asks. At the default scale of 1 it is the image's own size.
+        """
+        obj = self._live()
+        width, height = obj.image.size
+        if obj.scale == 1.0:
+            return (width, height)
+        return (round(width * obj.scale), round(height * obj.scale))
 
     @property
     def visible(self) -> bool:
