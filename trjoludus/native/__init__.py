@@ -83,14 +83,14 @@ class _SystemModule:
         super().__setattr__(name, value)
 
 
-def expose(module_name: str, *, always_native: bool,
+def expose(module_name: str, *, recommends: "str | None",
            python_implementation: "str | None") -> System:
     """Register a subsystem and give its module an ``engine`` attribute.
 
     Called at the bottom of each subsystem module, once everything else in it
     is defined::
 
-        expose(__name__, always_native=True,
+        expose(__name__, recommends=RUST,
                python_implementation="trjoludus.rendering_python")
 
     Args:
@@ -98,7 +98,8 @@ def expose(module_name: str, *, always_native: bool,
             the subsystem's name, so ``trjoludus.rendering`` registers
             ``"rendering"`` -- one name, taken from where the code lives,
             rather than a second one to keep in step.
-        always_native: Whether ``"auto"`` prefers the native implementation.
+        recommends: Which implementation ``"auto"`` prefers -- ``RUST``,
+            ``PYTHON``, or ``None`` when nothing implements this yet.
         python_implementation: Where the Python implementation lives, or
             ``None`` if there is not one yet.
 
@@ -109,7 +110,7 @@ def expose(module_name: str, *, always_native: bool,
     from types import ModuleType
 
     name = module_name.rsplit(".", 1)[-1]
-    registered = register(name, always_native=always_native,
+    registered = register(name, recommends=recommends,
                           python_implementation=python_implementation)
 
     module = sys.modules[module_name]

@@ -620,6 +620,11 @@ Ordered by severity.
 | 2026-08-25 | Decoded images are cached for a run, keyed by resolved path | An animation is a list of paths and a game switches pictures back and forth; the same file was being decoded again every time. Resolved, so `player.png` and `./player.png` are one entry. Images are immutable, so handing the same one out twice has no consequences |
 | 2026-08-25 | A failed load is not cached | The next attempt should try again: a file that was missing may have appeared, and remembering a failure would make that impossible |
 | 2026-08-25 | The cache belongs to the run, not the process | It goes when the run does, like the world and the drawing lists. A process-wide image cache would hold every sprite a program ever loaded for as long as it ran |
+| 2026-08-26 | Recommendation, availability and selection are three things | What a subsystem should use, what can be used, and what it gets. Collapsing them into one boolean is how `"auto"` ends up meaning something different in each subsystem, and how "is Rust there" and "should Rust be used" get confused |
+| 2026-08-26 | Python availability is checked, not assumed | An installation missing an implementation module is as real as one missing a native library, and a resolver that assumes one language always works cannot answer honestly when it does not. Both are asked the same way |
+| 2026-08-26 | `"auto"` falls back either way | Recommended first, then the other, then an error. The rule reads the same whichever language a subsystem recommends, so `animation` recommending Python is not a special case in the code |
+| 2026-08-26 | A recommendation is only made for a subsystem that exists | `collision`, `physics`, `ai`, `pathfinding` and `audio` recommend nothing. Writing `collision -> rust` today would be a decision made before the code that would have to justify it |
+| 2026-08-26 | Availability has a seam in both languages | Tests have to ask what happens when an implementation is missing. Removing a module from a running interpreter, or a library from under a process that loaded it, tests the removal rather than the rule |
 | 2026-08-25 | Paeth's tie-break rule cannot matter, and that is checked rather than argued | If left and above are equally close to the estimate but differ, then left + above = 2 x corner, so the estimate is corner and its distance is zero -- and the guard then forces all three equal, a contradiction. A test sweeps every byte triple to confirm the case is unreachable, because "no input can reach this" is exactly the kind of claim that is wrong |
 | 2026-08-12 | The scene is cleared when a run finishes | The objects belonged to that run. Leaving them would make a second `run()` inherit the first game's scene and collide on every name; anything created before a run still takes part in it |
 | 2026-08-12 | One conformance suite runs the same contract assertions against every backend | A platform abstraction is only real if the layers above cannot tell which backend is underneath. Backends that cannot run on the current machine are skipped, never mocked -- a fake window server would agree with a wrong implementation |
@@ -841,15 +846,49 @@ substitution rather than a redesign.
 ### Which implementation, per subsystem
 
 Each subsystem registers a `System` and exposes it as `<subsystem>.engine`.
+Three separate questions decide what runs, and keeping them separate is the
+point -- collapsing any two is how a backend switch ends up meaning something
+different in each subsystem.
 
-| Value | Meaning |
+**Recommendation** -- what TrjoLudus thinks a subsystem should normally use. A
+fixed property of the subsystem, not of the machine.
+
+| Subsystem | Recommends |
 | --- | --- |
-| `"auto"` | the default; native for always-native systems when available, Python otherwise |
-| `"rust"` | native, or a clear error |
-| `"python"` | Python, or a clear error if there is no Python implementation |
+| `rendering` | native |
+| `image` | native |
+| `animation` | Python |
+| `collision`, `physics`, `ai`, `pathfinding`, `audio` | nothing -- neither implementation exists |
 
-Always-native: `rendering`, `image`, `collision`, `physics`, `ai`,
-`pathfinding`. Flexible: `animation`, `audio`.
+A recommendation is only made for a subsystem that exists. One is not invented
+for a system that may one day be written natively.
+
+**Availability** -- what can actually be used here and now, asked separately
+for each language and asked *again* every time. `native_available()` asks the
+library, and asks the subsystem's own binding whether it can really start.
+`python_available()` asks whether the implementation module is reachable --
+Python is a capability, not an assumption, and an installation missing a
+module is as real as one missing a library.
+
+**Selection** -- what a game gets, from those two and what it asked for:
+
+```text
+asked for "python"  ->  Python if available, else an error
+asked for "rust"    ->  native if available, else an error
+asked for "auto"    ->  what is recommended, if available
+                        otherwise the other one, if available
+                        otherwise an error
+```
+
+An explicit choice never falls back. A game that says `"rust"` and silently
+gets Python has been told nothing and will wonder why it is slow; one that
+says `"python"` to compare implementations and silently gets the native one is
+comparing it with itself. `"auto"` is the setting where falling back is the
+point rather than a failure.
+
+Both languages have a test seam -- `_python_check` and `_native_check` -- so
+that "what if this were missing" can be asked without removing a module from a
+running interpreter or a library from under a loaded process.
 
 ### The boundary itself
 

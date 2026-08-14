@@ -738,26 +738,31 @@ physics.engine = "python"     # insist on the Python one
 
 | Value | Meaning |
 | --- | --- |
-| `"auto"` | **The default.** TrjoLudus chooses. Native for the systems below when a native implementation is available; Python otherwise. |
-| `"rust"` | Insist on the native implementation. A clear error if there is not one -- never a silent fall back to Python. |
-| `"python"` | Insist on the Python implementation. Useful for debugging, for comparing the two, and where no native library is available. |
+| `"auto"` | **The default.** TrjoLudus uses whichever it recommends for that subsystem, and the other one if the recommended one is not available. An error only if neither is. |
+| `"rust"` | Insist on the native implementation. A clear error if there is not one -- **never** a silent fall back to Python. |
+| `"python"` | Insist on the Python implementation. A clear error if there is not one -- **never** a silent fall back to Rust. Useful for debugging, for comparing the two, and where no native library is available. |
 
-The subsystems, and whether `"auto"` prefers native for them:
+Only `"auto"` ever falls back. That is what it is for.
+
+The subsystems, what `"auto"` prefers for each, and what exists today:
 
 | Subsystem | `"auto"` prefers | Implemented today |
 | --- | --- | --- |
 | `rendering` | native | **Python and Rust** |
 | `image` | native | **Python and Rust** |
-| `collision` | native | neither yet |
-| `physics` | native | neither yet |
-| `ai` | native | neither yet |
-| `pathfinding` | native | neither yet |
 | `animation` | Python | Python |
-| `audio` | Python | neither yet |
+| `collision` | -- | neither yet |
+| `physics` | -- | neither yet |
+| `ai` | -- | neither yet |
+| `pathfinding` | -- | neither yet |
+| `audio` | -- | neither yet |
 
-The first six are the ones where the work is per-pixel or per-entity every
-frame. The rest stay on Python until there is a measurement saying otherwise --
-nothing is moved to Rust to fill in a table.
+The subsystems with nothing written prefer nothing: TrjoLudus does not have an
+opinion about how a system should be implemented before it is.
+
+Rendering and image are where the work is per-pixel every frame, which is why
+they are the two that recommend the native implementation and the two that
+have one. Nothing is moved to Rust to fill in a table.
 
 **Rendering and image decoding have moved.** With a native library present,
 `"auto"` uses Rust for both; without one it uses Python, and the results are

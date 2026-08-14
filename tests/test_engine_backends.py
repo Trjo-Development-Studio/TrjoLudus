@@ -40,12 +40,18 @@ from trjoludus.native import (
 )
 from trjoludus.platform.null import NullBackend
 
-#: The subsystems that must run natively once they can.
-ALWAYS_NATIVE = ("rendering", "image", "collision", "physics", "ai",
-                 "pathfinding")
-
-#: The ones that stay on Python until there is a reason not to.
-FLEXIBLE = ("animation", "audio")
+#: What each subsystem recommends. Only subsystems that exist get one; a
+#: recommendation is not invented for a system nobody has written.
+RECOMMENDATIONS = {
+    "rendering": "rust",
+    "image": "rust",
+    "animation": "python",
+    "collision": None,
+    "physics": None,
+    "ai": None,
+    "pathfinding": None,
+    "audio": None,
+}
 
 MODULES = {
     "rendering": rendering, "image": image, "collision": collision,
@@ -121,18 +127,28 @@ class TestDefaults(BackendTestCase):
     def test_the_registry_knows_every_subsystem(self):
         self.assertEqual(
             {found.name for found in registry.systems()},
-            set(ALWAYS_NATIVE) | set(FLEXIBLE),
+            set(RECOMMENDATIONS),
         )
 
-    def test_the_always_native_list_is_what_it_should_be(self):
-        native = {found.name for found in registry.systems()
-                  if found.always_native}
-        self.assertEqual(native, set(ALWAYS_NATIVE))
-
-    def test_the_flexible_systems_are_not_forced_native(self):
-        for name in FLEXIBLE:
+    def test_each_subsystem_recommends_what_it_should(self):
+        for name, expected in RECOMMENDATIONS.items():
             with self.subTest(system=name):
-                self.assertFalse(registry.system(name).always_native)
+                self.assertEqual(registry.system(name).recommends, expected)
+
+    def test_the_migrated_subsystems_recommend_rust(self):
+        self.assertEqual(registry.system("rendering").recommends, RUST)
+        self.assertEqual(registry.system("image").recommends, RUST)
+
+    def test_nothing_unwritten_recommends_anything(self):
+        """A recommendation is for a subsystem that exists."""
+        for name in ("collision", "physics", "ai", "pathfinding", "audio"):
+            with self.subTest(system=name):
+                self.assertIsNone(registry.system(name).recommends)
+
+    def test_a_recommendation_must_be_a_backend_or_nothing(self):
+        with self.assertRaises(ValueError):
+            registry.System("nonsense", recommends="c++",
+                            python_implementation=None)
 
     def test_a_game_never_has_to_mention_engine(self):
         """The whole point: normal use requires no configuration."""
@@ -198,7 +214,7 @@ class TestWithNoNativeLibrary(BackendTestCase):
     def test_nothing_is_available(self):
         for name in MODULES:
             with self.subTest(system=name):
-                self.assertFalse(registry.system(name).available())
+                self.assertFalse(registry.system(name).native_available())
 
     def test_auto_falls_back_to_python(self):
         for name in ("rendering", "image", "animation"):
@@ -230,13 +246,21 @@ class TestWithNoNativeLibrary(BackendTestCase):
             with self.subTest(system=name):
                 with self.assertRaises(EngineError) as caught:
                     registry.system(name).resolve()
-                self.assertIn("no implementation yet", str(caught.exception))
+                message = str(caught.exception)
+                self.assertIn("no implementation", message)
+                self.assertIn(name, message)
 
     def test_asking_such_a_system_for_python_says_so_too(self):
         collision.engine = PYTHON
         with self.assertRaises(EngineError) as caught:
             registry.system("collision").resolve()
         self.assertIn("no Python implementation", str(caught.exception))
+
+    def test_asking_for_python_never_gives_rust(self):
+        """Explicit means explicit, in both directions."""
+        collision.engine = PYTHON
+        with self.assertRaises(EngineError):
+            registry.system("collision").resolve()
 
 
 class TestWithANativeLibrary(BackendTestCase):
@@ -250,7 +274,7 @@ class TestWithANativeLibrary(BackendTestCase):
     def test_a_library_that_only_says_the_word_is_not_enough(self):
         """A stand-in claiming rendering, with no functions, is refused."""
         self.pretend("rendering")
-        self.assertFalse(registry.system("rendering").available())
+        self.assertFalse(registry.system("rendering").native_available())
         rendering.engine = RUST
         with self.assertRaises(EngineError):
             registry.system("rendering").resolve()
@@ -258,7 +282,7 @@ class TestWithANativeLibrary(BackendTestCase):
     def test_auto_leaves_flexible_systems_on_python(self):
         """"auto" must not sweep a system into Rust just because it can."""
         self.pretend("animation")
-        self.assertTrue(registry.system("animation").available())
+        self.assertTrue(registry.system("animation").native_available())
         self.assertEqual(registry.system("animation").resolve(), PYTHON)
 
     def test_a_flexible_system_can_still_be_asked_for_rust(self):
@@ -273,8 +297,8 @@ class TestWithANativeLibrary(BackendTestCase):
 
     def test_availability_is_per_system(self):
         self.pretend("animation")
-        self.assertTrue(registry.system("animation").available())
-        self.assertFalse(registry.system("physics").available())
+        self.assertTrue(registry.system("animation").native_available())
+        self.assertFalse(registry.system("physics").native_available())
 
     def test_a_system_the_library_does_not_implement_still_errors(self):
         self.pretend("animation")
@@ -330,7 +354,7 @@ class TestSystemsAreIndependent(BackendTestCase):
 
     def test_registering_a_name_twice_is_refused(self):
         with self.assertRaises(EngineError):
-            registry.register("rendering", always_native=True,
+            registry.register("rendering", recommends=RUST,
                               python_implementation=None)
 
     def test_asking_for_a_system_that_does_not_exist(self):
@@ -511,11 +535,11 @@ class TestSettingsPersist(BackendTestCase):
     def test_availability_is_asked_again_each_time(self):
         """A resolver that cached would answer for a library long gone."""
         self.pretend("animation")
-        self.assertTrue(registry.system("animation").available())
+        self.assertTrue(registry.system("animation").native_available())
         self.pretend_nothing()
-        self.assertFalse(registry.system("animation").available())
+        self.assertFalse(registry.system("animation").native_available())
         self.pretend("animation")
-        self.assertTrue(registry.system("animation").available())
+        self.assertTrue(registry.system("animation").native_available())
 
 
 class TestTheWildcardImport(BackendTestCase):
@@ -632,7 +656,7 @@ class TestTheLibraryLoader(BackendTestCase):
         self.look_in(self.empty_directory())
         for name in MODULES:
             with self.subTest(system=name):
-                self.assertFalse(registry.system(name).available())
+                self.assertFalse(registry.system(name).native_available())
 
     def test_auto_falls_back_and_explicit_rust_does_not(self):
         self.look_in(self.empty_directory())

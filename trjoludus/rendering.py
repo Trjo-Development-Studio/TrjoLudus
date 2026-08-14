@@ -28,7 +28,7 @@ __all__ = ["engine"]
 #: it is live and writing something TrjoLudus does not know is refused.
 engine: str
 
-_SYSTEM = expose(__name__, always_native=True,
+_SYSTEM = expose(__name__, recommends=RUST,
                  python_implementation="trjoludus.rendering_python")
 
 

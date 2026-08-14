@@ -429,10 +429,10 @@ class Animator:
 # it, and that is a different system. The switch exists so that this can be
 # reconsidered with measurements rather than assumed either way.
 
-from trjoludus.native import expose  # noqa: E402
+from trjoludus.native import PYTHON, expose  # noqa: E402
 
 #: What a game has asked for: ``"auto"``, ``"rust"`` or ``"python"``.
 engine: str
 
-expose(__name__, always_native=False,
+expose(__name__, recommends=PYTHON,
        python_implementation="trjoludus.animation")

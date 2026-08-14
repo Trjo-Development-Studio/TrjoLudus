@@ -23,5 +23,5 @@ __all__ = ["engine"]
 #: it is live and writing something TrjoLudus does not know is refused.
 engine: str
 
-expose(__name__, always_native=True,
+expose(__name__, recommends=None,
        python_implementation=None)

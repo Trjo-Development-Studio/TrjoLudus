@@ -566,10 +566,10 @@ def _to_bgra(rows: bytes, width: int, height: int, colour_type: int,
 # a game writes changes when that happens: ``create.image(...)`` takes a path
 # either way.
 
-from trjoludus.native import expose  # noqa: E402
+from trjoludus.native import RUST, expose  # noqa: E402
 
 #: What a game has asked for: ``"auto"``, ``"rust"`` or ``"python"``.
 engine: str
 
-expose(__name__, always_native=True,
+expose(__name__, recommends=RUST,
        python_implementation="trjoludus.image")
