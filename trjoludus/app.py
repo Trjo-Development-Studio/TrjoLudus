@@ -278,6 +278,10 @@ class Application:
                 break
 
             game.on_update(self._clock.tick())
+            # After the update, so an animation started this frame shows its
+            # first frame now; before the render, so what moves on is what
+            # gets drawn. Paced by the same clock as everything else.
+            current_scene().advance_animations(self._clock.delta)
             self._render(window)
 
     def _deliver(self, events, window=None) -> None:

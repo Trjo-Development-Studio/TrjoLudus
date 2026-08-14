@@ -30,6 +30,7 @@ from trjoludus.app import Application, run
 from trjoludus.errors import (
     PlatformError,
     TrjoLudusError,
+    TrjoLudusWarning,
     UnsupportedPlatformError,
 )
 from trjoludus.events import (
@@ -43,6 +44,7 @@ from trjoludus.events import (
 )
 from trjoludus.game import Game
 from trjoludus.keyboard import key
+from trjoludus.animation import AnimationError
 from trjoludus.image import ImageError
 from trjoludus.platform import PlatformName, detect_platform
 from trjoludus.scene import GameObject, SceneError
@@ -71,9 +73,11 @@ __all__ = [
     "time",
     # Errors
     "TrjoLudusError",
+    "TrjoLudusWarning",
     "PlatformError",
     "UnsupportedPlatformError",
     "ImageError",
+    "AnimationError",
     "SceneError",
     "UiError",
     # Events

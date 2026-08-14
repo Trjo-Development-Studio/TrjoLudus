@@ -7,7 +7,7 @@ written in Python and designed for Windows and Linux.
 > image objects into it, moves and destroys them, draws lines, rectangles and
 > text, changes any of it while the game runs, and reads the keyboard and
 > mouse -- including which drawing the pointer is over and which one was
-> clicked. Verified on Linux/X11. A Windows backend exists but is **not
+> clicked, and plays named animations. Verified on Linux/X11. A Windows backend exists but is **not
 > verified on Windows**. Sound, collision, animation, saving and public
 > multi-window support are not implemented.
 
@@ -59,6 +59,7 @@ trjoludus/
     font.py            the built-in text font
     keyboard.py        waiting for key presses
     time.py            waiting, frame delta and frame rate
+    animation.py       named frame sequences and how they play
     mouse.py           pointer position, buttons and clicks
     input.py           what the waiting calls can wait for, and input.wait()
     scene.py           named game objects and the scene holding them
@@ -475,6 +476,76 @@ size it is drawn at, not the image's own size.
 Images are scaled by nearest-neighbour: each drawn pixel takes the colour of
 the source pixel it lands on. That keeps pixel art crisp instead of blurring
 it, which is what a 2D engine usually wants.
+
+### Animation
+
+An animation is a list of pictures with a name. Define it once, then play it:
+
+```python
+player.animation.add("walk", ["walk_1.png", "walk_2.png",
+                              "walk_3.png", "walk_4.png"])
+
+player.animation.play("walk", fps=12, loop=True)
+```
+
+`fps` defaults to 10 and `loop` to `True`. `loop=False` plays once and stays
+on the last frame. Every frame is loaded by `add()`, so a missing file is
+reported where the list is written rather than mid-game.
+
+**Playing does not block.** The engine advances the animation a little each
+frame, using how long the frame took, so a game carries on moving, reading
+input and drawing while it runs -- and the animation looks the same on a slow
+machine as on a fast one.
+
+**Calling `play()` again does nothing.** A game that plays "walk" every frame
+while a key is held means "keep walking", not "start walking again", so the
+second call is ignored and the animation carries on. It warns once, in case
+that was not what you meant:
+
+```python
+if mouse.pressed("LEFT"):
+    player.animation.play("walk", fps=12)   # every frame; carries on
+    player.move.x(120 * time.delta)
+```
+
+To change how it plays, stop it first -- the ignored call ignores new `fps`
+and `loop` settings too:
+
+```python
+player.animation.stop("walk")
+player.animation.play("walk", fps=24)
+```
+
+The rest:
+
+```python
+player.animation.pause("walk")    # freeze on this frame
+player.animation.resume("walk")   # carry on from it
+player.animation.stop("walk")     # stop, keeping this frame
+
+player.animation.current          # "walk", or None
+player.animation.is_playing       # advancing right now?
+player.animation.finished         # a loop=False animation reached its end?
+```
+
+Playing a *different* animation switches to it, from its first frame.
+
+**Nothing switches by itself.** TrjoLudus never decides that an object should
+be idling or walking. To go back to a single still picture, say so:
+
+```python
+player.set.image("idle.png")
+```
+
+That stops whatever was playing -- an animation and a hand-picked image cannot
+both decide what is drawn, so the one you asked for wins. It warns, because a
+game that did not realise something was playing would otherwise see its image
+quietly overwritten on the next frame.
+
+Animation only changes the picture. Position, fractional position, scale and
+everything else about the object are untouched.
+
+See [`examples/animation_test.py`](examples/animation_test.py).
 
 ### Running without a window
 

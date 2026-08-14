@@ -262,7 +262,7 @@ class TestAbsoluteAndRelative(ObjectTestCase):
     def test_set_offers_exactly_what_it_should(self):
         offered = {name for name in dir(self.player.set)
                    if not name.startswith("_")}
-        self.assertEqual(offered, {"x", "y", "scale"})
+        self.assertEqual(offered, {"x", "y", "scale", "image"})
 
     def test_an_unknown_name_cannot_be_assigned(self):
         with self.assertRaises(AttributeError):

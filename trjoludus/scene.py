@@ -20,9 +20,12 @@ through it acts on what the engine is actually drawing, and a future
 
 from math import isfinite
 
+from trjoludus.animation import DEFAULT_FPS, Animator
+from trjoludus.image import load_image
 from trjoludus.errors import TrjoLudusError
 
 __all__ = [
+    "AnimationControl",
     "GameObject",
     "Movement",
     "Placement",
@@ -45,7 +48,8 @@ class SceneObject:
     them and :class:`GameObject` reaches them.
     """
 
-    __slots__ = ("name", "image", "x", "y", "scale", "visible", "removed")
+    __slots__ = ("name", "image", "x", "y", "scale", "visible", "removed",
+                 "animator")
 
     def __init__(self, name: str, image, x: int, y: int) -> None:
         self.name = name
@@ -59,6 +63,9 @@ class SceneObject:
         #: Set when the object leaves the scene. Handles check it so that
         #: using one afterwards is an error rather than a silent no-op.
         self.removed = False
+        #: The animations this object knows and the one it is playing. Lives
+        #: here rather than on a handle, so every handle sees the same thing.
+        self.animator = Animator(self)
 
     def __repr__(self) -> str:
         return (
@@ -130,6 +137,16 @@ class Scene:
         if removed is None:
             raise SceneError(self._missing_message(name))
         removed.removed = True
+
+    def advance_animations(self, seconds: float) -> None:
+        """Move every playing animation on by one frame's worth of time.
+
+        Driven by the loop rather than by each object, so animation is paced
+        by the same clock as everything else and a game does not have to
+        remember to tick anything.
+        """
+        for obj in self._objects.values():
+            obj.animator.advance(seconds)
 
     def clear(self) -> None:
         """Forget every object."""
@@ -234,7 +251,7 @@ class Placement:
     #: What ``set.name = value`` accepts. Assignment routes to the method of
     #: the same name, so the two forms cannot drift apart -- there is one
     #: implementation of each, not two.
-    _ASSIGNABLE = ("x", "y", "scale")
+    _ASSIGNABLE = ("x", "y", "scale", "image")
 
     def __init__(self, owner: "GameObject") -> None:
         self._owner = owner
@@ -282,6 +299,26 @@ class Placement:
         """
         self._owner._live().scale = _check_scale(amount)
 
+    def image(self, path) -> None:
+        """Draw this object with a different picture from now on.
+
+        If an animation is playing it stops, because the two cannot both
+        decide what is drawn -- the picture asked for here wins, and a warning
+        says so. Position and scale are untouched.
+
+        Args:
+            path: Path to a PNG file.
+
+        Raises:
+            ImageError: If the file is missing or is not a PNG this decoder
+                supports.
+            SceneError: If the object has been removed.
+        """
+        obj = self._owner._live()
+        loaded = load_image(path)
+        obj.animator.replaced_by_hand()
+        obj.image = loaded
+
     def __repr__(self) -> str:
         return f"Placement({self._owner.name!r})"
 
@@ -321,6 +358,81 @@ class Sizing:
 
     def __repr__(self) -> str:
         return f"Sizing({self._owner.name!r}, {self._how!r})"
+
+
+class AnimationControl:
+    """A game's way of reaching one object's animations.
+
+    Reached as :attr:`GameObject.animation`::
+
+        player.animation.add("walk", ["walk_1.png", "walk_2.png"])
+        player.animation.play("walk", fps=12)
+
+    Every call goes through the handle first, so using an animation on an
+    object that has been destroyed says so rather than quietly working on
+    something nobody draws. The animations themselves live on the scene's
+    record, which is why any handle naming the object reaches the same ones.
+    """
+
+    __slots__ = ("_owner",)
+
+    def __init__(self, owner: "GameObject") -> None:
+        self._owner = owner
+
+    def _animator(self):
+        return self._owner._live().animator
+
+    def add(self, name: str, frames) -> None:
+        """Teach this object an animation. See :meth:`Animator.add`."""
+        self._animator().add(name, frames)
+
+    def play(self, name: str, fps=DEFAULT_FPS, loop: bool = True) -> None:
+        """Start an animation. See :meth:`Animator.play`."""
+        self._animator().play(name, fps, loop)
+
+    def pause(self, name: str) -> None:
+        """Freeze an animation where it is."""
+        self._animator().pause(name)
+
+    def resume(self, name: str) -> None:
+        """Carry on from where :meth:`pause` stopped."""
+        self._animator().resume(name)
+
+    def stop(self, name: str) -> None:
+        """Stop an animation, keeping the frame it reached."""
+        self._animator().stop(name)
+
+    def frames(self, name: str) -> int:
+        """How many frames an animation has."""
+        return self._animator().frames(name)
+
+    @property
+    def current(self):
+        """The animation being played, paused on, or stopped on."""
+        return self._animator().current
+
+    @property
+    def is_playing(self) -> bool:
+        """Whether an animation is advancing right now."""
+        return self._animator().is_playing
+
+    @property
+    def finished(self) -> bool:
+        """Whether a non-looping animation has played all the way through."""
+        return self._animator().finished
+
+    @property
+    def frame(self) -> int:
+        """Which frame is showing, counting from 1. ``0`` before anything."""
+        return self._animator().frame
+
+    @property
+    def names(self) -> tuple:
+        """Every animation this object knows."""
+        return self._animator().names
+
+    def __repr__(self) -> str:
+        return f"AnimationControl({self._owner.name!r})"
 
 
 class Movement:
@@ -436,6 +548,14 @@ class GameObject:
             player.set.x(200)
         """
         return Placement(self)
+
+    @property
+    def animation(self) -> AnimationControl:
+        """The animations this object knows::
+
+            player.animation.play("walk", fps=12)
+        """
+        return AnimationControl(self)
 
     @property
     def add(self) -> Sizing:

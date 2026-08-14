@@ -66,6 +66,7 @@ the last.
 | `ui_test.py` | Draws lines, rectangles and text into drawing lists. |
 | `button_test.py` | A button that grows on hover and counts clicks. |
 | `time_test.py` | Movement per frame against movement per second. |
+| `animation_test.py` | A block that walks while a mouse button is held. |
 | `assets/` | Images the examples use. |
 
 All of these use **only the public API**: `run()` picks the backend itself and
