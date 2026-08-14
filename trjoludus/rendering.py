@@ -1,0 +1,32 @@
+"""Turning what a game says into pixels.
+
+The system, not the implementation. Today the implementation is
+:class:`trjoludus.render.Framebuffer` -- pure Python, one pixel
+at a time -- and this module is where the choice between that and
+a native one is made.
+
+Rendering touches every pixel of every frame, so it is the first
+place a native implementation is worth having, and the first that
+``"auto"`` will prefer once one exists. Nothing about how a game
+draws changes when it does: ``draw.rect(...)``, ``draw.text(...)``
+and ``create.image(...)`` are the API either way.
+
+**Backend.** ``rendering.engine`` chooses which implementation runs::
+
+    rendering.engine = "auto"     # the default; a game need never set it
+    rendering.engine = "rust"
+    rendering.engine = "python"
+
+See :mod:`trjoludus.native` for what those mean and when they take effect.
+"""
+
+from trjoludus.native import expose
+
+__all__ = ["engine"]
+
+#: What a game has asked for. Served by the module's own type, so that reading
+#: it is live and writing something TrjoLudus does not know is refused.
+engine: str
+
+expose(__name__, always_native=True,
+       python_implementation="trjoludus.render")

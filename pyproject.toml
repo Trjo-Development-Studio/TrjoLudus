@@ -35,3 +35,9 @@ version = { attr = "trjoludus.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["trjoludus*"]
+
+# A built native library, if there is one. TrjoLudus installs and runs without
+# it -- every subsystem falls back to Python -- so this ships whatever happens
+# to be built rather than requiring anything. See rust/README.md.
+[tool.setuptools.package-data]
+"trjoludus.native" = ["lib/*.so", "lib/*.dll", "lib/*.dylib"]

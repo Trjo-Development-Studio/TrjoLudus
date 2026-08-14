@@ -25,7 +25,23 @@ an import statement does, so naming the pieces is how they reach a file. Every
 name in :data:`__all__` is meant to be imported this way.
 """
 
-from trjoludus import color, create, draw, input, keyboard, mouse, time
+from trjoludus import (
+    ai,
+    animation,
+    audio,
+    collision,
+    color,
+    create,
+    draw,
+    image,
+    input,
+    keyboard,
+    mouse,
+    pathfinding,
+    physics,
+    rendering,
+    time,
+)
 from trjoludus.app import Application, run
 from trjoludus.errors import (
     PlatformError,
@@ -47,6 +63,7 @@ from trjoludus.game import Game
 from trjoludus.keyboard import key
 from trjoludus.animation import AnimationError
 from trjoludus.image import ImageError
+from trjoludus.native import EngineError
 from trjoludus.platform import PlatformName, detect_platform
 from trjoludus.scene import GameObject, SceneError
 from trjoludus.ui import UiError
@@ -72,6 +89,16 @@ __all__ = [
     "key",
     # Time
     "time",
+    # Subsystems, and which implementation each one uses. A game never has to
+    # touch these: every one of them defaults to "auto".
+    "rendering",
+    "image",
+    "collision",
+    "physics",
+    "ai",
+    "pathfinding",
+    "animation",
+    "audio",
     # Errors
     "TrjoLudusError",
     "TrjoLudusWarning",
@@ -79,6 +106,7 @@ __all__ = [
     "UnsupportedPlatformError",
     "ImageError",
     "AnimationError",
+    "EngineError",
     "SceneError",
     "UiError",
     # Events

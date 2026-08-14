@@ -1,0 +1,22 @@
+# The TrjoLudus native workspace.
+#
+# Nothing here is required to run TrjoLudus. With no library built, every
+# subsystem falls back to its Python implementation, which is what happens
+# today. See rust/README.md.
+
+[workspace]
+resolver = "2"
+members = ["trjoludus-native"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[profile.release]
+# A game's frame budget is the whole point of this crate existing.
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

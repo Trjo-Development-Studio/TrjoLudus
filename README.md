@@ -60,6 +60,16 @@ trjoludus/
     keyboard.py        waiting for key presses
     time.py            waiting, frame delta and frame rate
     animation.py       named frame sequences and how they play
+    rendering.py       the rendering subsystem's backend choice
+    collision.py       ) subsystems with no implementation yet: each exists
+    physics.py         ) so that its backend can be chosen before the code
+    ai.py              ) that implements it is written
+    pathfinding.py     )
+    audio.py           )
+    native/            the boundary to the native library
+        registry.py    which implementation each subsystem uses
+        library.py     finding and loading the native library
+        lib/           a built native library goes here, if there is one
     mouse.py           pointer position, buttons and clicks
     input.py           what the waiting calls can wait for, and input.wait()
     scene.py           named game objects and the scene holding them
@@ -633,6 +643,66 @@ env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u XDG_SESSION_TYPE \
 That run should report skips. If it reports none, a test found a display it
 should not have.
 
+## Advanced: choosing a backend
+
+**You can skip this section.** TrjoLudus is a Python engine, everything above
+is normal Python, and a game never has to mention any of what follows. There is
+no Rust in the beginner path and no Rust to learn.
+
+TrjoLudus is growing native implementations of the parts where Python is the
+bottleneck. Which implementation each subsystem uses is its own setting:
+
+```python
+from trjoludus import rendering, physics
+
+rendering.engine = "rust"     # insist on the native one
+physics.engine = "python"     # insist on the Python one
+```
+
+| Value | Meaning |
+| --- | --- |
+| `"auto"` | **The default.** TrjoLudus chooses. Native for the systems below when a native implementation is available; Python otherwise. |
+| `"rust"` | Insist on the native implementation. A clear error if there is not one -- never a silent fall back to Python. |
+| `"python"` | Insist on the Python implementation. Useful for debugging, for comparing the two, and where no native library is available. |
+
+The subsystems, and whether `"auto"` prefers native for them:
+
+| Subsystem | `"auto"` prefers | Implemented today |
+| --- | --- | --- |
+| `rendering` | native | Python |
+| `image` | native | Python |
+| `collision` | native | neither yet |
+| `physics` | native | neither yet |
+| `ai` | native | neither yet |
+| `pathfinding` | native | neither yet |
+| `animation` | Python | Python |
+| `audio` | Python | neither yet |
+
+The first six are the ones where the work is per-pixel or per-entity every
+frame. The rest stay on Python until there is a measurement saying otherwise --
+nothing is moved to Rust to fill in a table.
+
+**Nothing is faked.** No native implementation exists yet, so `"auto"` uses
+Python everywhere today and `rendering.engine = "rust"` raises an error saying
+so. That is the point: an explicit choice that cannot be honoured is reported,
+not quietly swapped for the other one.
+
+**Set it before `run()`.** Changing a subsystem's engine while a game is
+running is refused, because half of it would already have started on the old
+one.
+
+```python
+rendering.engine = "python"    # fine
+run(MyGame())
+```
+
+Settings are per subsystem and independent: choosing one backend for rendering
+says nothing about physics. They last for the life of the process, because they
+are a statement about how the program should run rather than about one game.
+
+Building the native library is documented in [`rust/README.md`](rust/README.md),
+and is only of interest if you are working on the engine itself.
+
 ## Roadmap
 
 The initial engine targets 2D only. 3D is explicitly out of scope and may be
@@ -643,7 +713,8 @@ considered much later.
 | 0 | Project foundation, platform detection | done |
 | 1 | Window creation + game loop | done (Linux; Windows unverified) |
 | 2 | Core engine: objects, drawing, input, interaction | done (Linux; Windows unverified) |
-| 3 | Animation | planned |
+| 3.0 | Native engine architecture (backend selection) | done (no native implementations yet) |
+| 3.x | Moving subsystems to Rust, starting with rendering | planned |
 | 4 | Collision | planned |
 | 5 | Audio | planned |
 | 6 | Asset management | planned |
@@ -662,6 +733,9 @@ Milestone 2 was built in seven steps, each tested before the next began:
 | 5 | Mouse input: position, held buttons, `mouse.wait()` |
 | 6 | UI interaction: `hover()`, `clicked()`, scale, draw order |
 | 7 | Dynamic drawings: changing text, colour, position and scale in place |
+| 8 | Time: waiting, frame delta, frame rate, sub-pixel positions |
+| 9 | Animation: named frame sequences |
+| 10 | Keyboard held-key state |
 
 **Not implemented, and deliberately not started:** sliders, text input,
 drag-and-drop, layout systems, animation, collision, audio, saving, cameras,

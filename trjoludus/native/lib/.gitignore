@@ -1,0 +1,9 @@
+# A built native library goes here; see rust/README.md.
+#
+# Build artefacts are not committed: they are platform-specific, they are
+# large, and a stale one committed by accident would be loaded in preference
+# to a freshly built one. This file exists so the directory does, so that the
+# loader has somewhere to look and the build has somewhere to copy to.
+*.so
+*.dll
+*.dylib

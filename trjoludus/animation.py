@@ -420,3 +420,19 @@ class Animator:
         state = "playing" if self._playing else "stopped"
         return (f"Animator({self._object.name!r}, {len(self._frames)} "
                 f"animations, {self._current!r} {state})")
+
+
+# --- backend ---------------------------------------------------------------
+#
+# Animation is not always-native. Advancing a frame index once per object per
+# frame is a handful of comparisons; the work is in the rendering that follows
+# it, and that is a different system. The switch exists so that this can be
+# reconsidered with measurements rather than assumed either way.
+
+from trjoludus.native import expose  # noqa: E402
+
+#: What a game has asked for: ``"auto"``, ``"rust"`` or ``"python"``.
+engine: str
+
+expose(__name__, always_native=False,
+       python_implementation="trjoludus.animation")

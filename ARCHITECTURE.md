@@ -572,6 +572,17 @@ Ordered by severity.
 | 2026-08-19 | Key state is per window, like the pointer | A key is held *in* a window, and one that is not focused is not receiving it. The public `keyboard.button` reads the running game's window; a future `some_window.keyboard` is the same object rather than a redesign |
 | 2026-08-19 | A window going away releases everything held in it | There is no release coming for a window that no longer exists, so a key held at that moment would stay held for good -- and the next run would start with a key down that nobody is pressing |
 | 2026-08-19 | An unknown key name raises rather than answering `False` | A misspelling would otherwise report "not held" forever, which looks exactly like a key that is simply not being pressed. Lowercase gets its own message, because that is the mistake people actually make |
+| 2026-08-20 | The backend is chosen per subsystem, not once for the engine | They are not one decision. A game debugging its physics in Python has no reason to give up a native renderer, and one global switch would make every subsystem's migration a breaking change for everyone else |
+| 2026-08-20 | `"auto"` is the default, and a game never has to say otherwise | The engine's implementation is not a game's problem. A project that never mentions `.engine` gets the right answer, which is the only way most games will ever be written |
+| 2026-08-20 | An explicit `"rust"` that cannot be honoured is an error | Falling back silently tells a game nothing and leaves it wondering why it is still slow. The whole reason to say `"rust"` out loud is to find out whether it is there |
+| 2026-08-20 | `"auto"` prefers native only for the systems where the work is per-pixel or per-entity | rendering, image, collision, physics, ai, pathfinding. The rest stay on Python until something is measured. Moving a system to Rust to fill in a table is how an engine acquires code nobody can maintain and nobody benefits from |
+| 2026-08-20 | The boundary is a C ABI, not a Python extension | A PyO3 extension ties each build to one Python version, stops the wheel being pure Python, and puts the Python C API in the hot path. A C ABI keeps TrjoLudus installable with no native library at all, which is the ordinary case |
+| 2026-08-20 | Work crosses the boundary in bulk, and never calls back | A native subsystem does a whole frame before returning. A call per pixel would cost more than the pixel, and a callback into the interpreter from inside a loop undoes the reason the loop is native |
+| 2026-08-20 | `ctypes` is now allowed in `native/` as well as `platform/` | Both are the same kind of thing: the place where TrjoLudus meets code that is not Python. The rule was never about `platform/` in particular, and the test that enforces it now says so |
+| 2026-08-20 | Subsystems with no implementation are registered anyway | collision, physics, ai and pathfinding have no code in either language. Registering them now is what lets the implementation arrive without the API around it being invented at the same time -- and makes where it belongs obvious |
+| 2026-08-20 | An engine cannot be changed while a game is running | Half the subsystem would already have started on the old one. Refusing is better than a half-switched renderer, and there is no case for hot-swapping that a restart does not serve |
+| 2026-08-20 | A setting lasts for the life of the process | It is a statement about how the program should run, not about one game, so a second `run()` keeps it. Runs reset input, timing and the scene; this is configuration, and configuration is not run state |
+| 2026-08-20 | Nothing is stubbed to make the architecture look finished | The Rust crate implements nothing and says so, so `rendering.engine = "rust"` fails today. A stub that reported itself implemented while doing nothing would make that call succeed and change nothing, which is worse than an honest error |
 | 2026-08-12 | The scene is cleared when a run finishes | The objects belonged to that run. Leaving them would make a second `run()` inherit the first game's scene and collide on every name; anything created before a run still takes part in it |
 | 2026-08-12 | One conformance suite runs the same contract assertions against every backend | A platform abstraction is only real if the layers above cannot tell which backend is underneath. Backends that cannot run on the current machine are skipped, never mocked -- a fake window server would agree with a wrong implementation |
 | 2026-08-12 | Tutorial code may use the public API only | No `trjoludus.platform`, no `ctypes`, no private internals. A lesson that cannot be written without reaching past the public API is evidence the public API is unfinished, and the fix belongs in the engine. `examples/window_test.py` currently breaks this rule out of necessity and is therefore classified as an engine smoke test, to be replaced by a real first lesson once backend selection exists |
@@ -673,3 +684,66 @@ thread, or that the buffer is reallocated on resize. Those are free to change.
 
 **Not now.** No Rust, no C, no rewrite -- and no optimisation until something
 has been measured and found too slow. This section is a map, not a plan.
+
+---
+
+## 12. The native boundary
+
+Milestone 3.0 built the architecture that lets subsystems move to Rust. No
+subsystem has moved; this section is the shape they will move into.
+
+### The layers
+
+```
+Your game                     player.move.x(100 * time.delta)
+     |
+trjoludus/ public API         create, draw, keyboard, time, GameObject
+     |
+engine and application        the scene, the loop, the input queue
+     |
+trjoludus/native/             which implementation, and loading it
+     |
+rust/                         the implementations themselves
+```
+
+The third layer is the new one. Everything above it is written as though the
+fourth did not exist, which is the property that makes a migration a
+substitution rather than a redesign.
+
+### Which implementation, per subsystem
+
+Each subsystem registers a `System` and exposes it as `<subsystem>.engine`.
+
+| Value | Meaning |
+| --- | --- |
+| `"auto"` | the default; native for always-native systems when available, Python otherwise |
+| `"rust"` | native, or a clear error |
+| `"python"` | Python, or a clear error if there is no Python implementation |
+
+Always-native: `rendering`, `image`, `collision`, `physics`, `ai`,
+`pathfinding`. Flexible: `animation`, `audio`.
+
+### The boundary itself
+
+A C ABI shared library, loaded with `ctypes` from `native/library.py` -- the
+same discipline the platform layer uses for `libX11` and `user32`, including
+explicit `argtypes` **and** `restype` on every function.
+
+Three rules hold at the boundary:
+
+1. **Work crosses in bulk.** A whole frame, a whole broad-phase pass. Nothing
+   is called once per pixel or per entity.
+2. **Nothing calls back into Python.** Data in, results out.
+3. **Ownership is explicit.** A buffer is borrowed for one call, or owned
+   natively and freed by an explicit call.
+
+### Rules
+
+- `ctypes` may be imported under `trjoludus/platform/` **and**
+  `trjoludus/native/`, and nowhere else. Both are boundaries to code that is
+  not Python. Enforced by `tests/test_architecture.py`.
+- Only `native/library.py` loads the library, as only one module per platform
+  loads that platform's libraries.
+- `native` is not in `trjoludus.__all__`. A game never imports the boundary.
+- No Rust concept -- pointer, handle, struct, FFI type -- appears in a public
+  name. Enforced by a test.

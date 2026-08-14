@@ -368,3 +368,21 @@ def _to_bgra(rows: bytes, width: int, height: int, colour_type: int,
         )
 
     return bytes(out)
+
+
+# --- backend ---------------------------------------------------------------
+#
+# Decoding a PNG is per-pixel work over the whole image: unfiltering every
+# scanline and turning samples into BGRA. That is the shape of thing a native
+# implementation does far faster, so image processing is an always-native
+# system -- ``"auto"`` will prefer Rust once there is a Rust decoder. Nothing
+# a game writes changes when that happens: ``create.image(...)`` takes a path
+# either way.
+
+from trjoludus.native import expose  # noqa: E402
+
+#: What a game has asked for: ``"auto"``, ``"rust"`` or ``"python"``.
+engine: str
+
+expose(__name__, always_native=True,
+       python_implementation="trjoludus.image")
