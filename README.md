@@ -58,6 +58,7 @@ trjoludus/
     ui.py              drawing lists and the interactive drawings in them
     font.py            the built-in text font
     keyboard.py        waiting for key presses
+    time.py            waiting, frame delta and frame rate
     mouse.py           pointer position, buttons and clicks
     input.py           what the waiting calls can wait for, and input.wait()
     scene.py           named game objects and the scene holding them
@@ -318,6 +319,55 @@ mouse.pressed("LEFT")       # False   -- it is not held any more
 
 For "was this drawing clicked this frame", neither is the tool: ask the
 drawing, with `button.mouse.clicked()`.
+
+### Time
+
+```python
+from trjoludus import time
+
+time.wait(1)        # pause for a second
+print(time.fps)
+```
+
+**Measure movement in time, not in frames.** `move.x(2)` moves twice as far on
+a machine drawing twice as many frames. Scaling by `time.delta` -- how long the
+last frame took -- moves the same distance per second on both.
+
+Positions are whole pixels, and a fraction of a pixel per frame is not, so keep
+the exact position yourself and place the object from it:
+
+```python
+def on_start(self):
+    self.player_x = 0.0
+
+def on_update(self, dt):
+    self.player_x += 100 * time.delta      # 100 pixels every second
+    self.player.set.x(round(self.player_x))
+```
+
+Round the **total**, not each step. `move.x(round(100 * time.delta))` looks
+simpler but drifts badly: at 60 fps each step is 1.67 pixels, every one of them
+rounds up to 2, and after a second the object is 20% further along than it
+should be. Rounding an absolute position cannot accumulate an error.
+
+`time.delta` is the same number `on_update(dt)` is handed. It exists so that
+code which is not in `on_update` -- a helper, a method of your own -- can reach
+it without it being passed down. It is `0.0` on the first frame of a run,
+because nothing has been measured yet, so movement scaled by it stands still
+for one frame instead of jumping by a made-up amount. It is also clamped, so a
+frame that stalls cannot teleport your game.
+
+`time.fps` is worked out from the most recent frame, so it jumps about. To show
+it to a player, round it or only update the number a few times a second.
+
+Both are read-only and read live: assigning to them raises, and reading always
+gives the current answer. Reach them through the module -- `from trjoludus.time
+import delta` would take a copy that never changes.
+
+`time.wait()` keeps the window alive while it waits: events are still
+delivered, so closing the window still reaches your game mid-wait. Like every
+blocking call in TrjoLudus, it stops early if the game quits or its window
+disappears, so a wait can never outlive the game it is in.
 
 ### Waiting for either
 

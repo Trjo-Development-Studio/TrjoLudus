@@ -216,6 +216,10 @@ class Application:
             # A stop request belongs to one run. Clearing it here is what lets
             # the same game instance be run again after it quit.
             self._game._begin_run()
+            # So does the timing. Without this a second run would open with a
+            # delta measuring the gap between the two runs, and a frame count
+            # carried over from the first.
+            self._clock.reset()
             self._game.on_start()
             started = True
             # Show what on_start built before running a single frame. The loop
@@ -368,19 +372,65 @@ class Application:
             if taken is not None:
                 self._record(taken)
                 return taken
-            if self._game.quit_requested:
+            if not self._keep_waiting(lambda: self._peek(kind)):
                 break
-            if not self._backend.keeps_application_alive:
-                break
-            self._deliver(self._window.poll_events())
-            if self._peek(kind) or self._game.quit_requested:
-                continue
-            # Nothing arrived. Pause briefly rather than spin: this is pacing,
-            # not a wait for something that has already happened.
-            sleep(KEY_POLL_INTERVAL)
 
         self._record(None, kind)
         return None
+
+    def wait_for_seconds(self, seconds: float) -> bool:
+        """Block for roughly ``seconds`` while keeping the window alive.
+
+        Not a second game loop: it turns the same crank
+        :meth:`wait_for_input` does, so events are still polled and delivered
+        and a close request still reaches the game while the wait runs.
+
+        Returns:
+            ``True`` if the full time passed, ``False`` if the wait had to
+            give up because the game quit or its last window disappeared.
+
+        The pause between polls is never longer than the time remaining, so a
+        wait shorter than the poll interval is still roughly the length it
+        asked for rather than being rounded up to it.
+        """
+        if self._window is None:  # pragma: no cover -- run() sets it
+            raise TrjoLudusError("waiting needs a running game.")
+
+        deadline = self._clock.now() + seconds
+        while True:
+            remaining = deadline - self._clock.now()
+            if remaining <= 0.0:
+                return True
+            if not self._keep_waiting(
+                lambda: False, min(KEY_POLL_INTERVAL, remaining)
+            ):
+                return False
+
+    def _keep_waiting(self, ready, pause: float = KEY_POLL_INTERVAL) -> bool:
+        """One turn of a blocking wait. ``False`` when it has to give up.
+
+        Every blocking call in the engine turns here, which is what stops a
+        new kind of waiting from quietly missing a reason to stop: the game
+        asking to quit, or its last window disappearing. A window can be
+        destroyed without any close request being sent, and then whatever is
+        being waited for can never arrive.
+
+        Args:
+            ready: Asked after polling whether the thing being waited for has
+                arrived. When it has, the pause is skipped.
+            pause: How long to sleep when nothing arrived. Pausing rather
+                than spinning is pacing, not a wait for something that has
+                already happened.
+        """
+        if self._game.quit_requested:
+            return False
+        if not self._backend.keeps_application_alive:
+            return False
+        self._deliver(self._window.poll_events())
+        if ready() or self._game.quit_requested:
+            return True
+        sleep(pause)
+        return True
 
     def _peek(self, kind: str | None) -> bool:
         """Whether the queue holds anything of the kind being waited for."""

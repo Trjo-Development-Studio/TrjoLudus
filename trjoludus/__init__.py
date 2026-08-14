@@ -25,7 +25,7 @@ an import statement does, so naming the pieces is how they reach a file. Every
 name in :data:`__all__` is meant to be imported this way.
 """
 
-from trjoludus import color, create, draw, input, keyboard, mouse
+from trjoludus import color, create, draw, input, keyboard, mouse, time
 from trjoludus.app import Application, run
 from trjoludus.errors import (
     PlatformError,
@@ -67,6 +67,8 @@ __all__ = [
     "mouse",
     "input",
     "key",
+    # Time
+    "time",
     # Errors
     "TrjoLudusError",
     "PlatformError",

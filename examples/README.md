@@ -59,13 +59,17 @@ the last.
 
 | File | What it is |
 | --- | --- |
-| `window_test.py` | Opens a real window with `tl.run()`. |
+| `window_test.py` | Opens a real window with `run()`. |
 | `image_test.py` | Creates a named image object and moves it. |
 | `keyboard_test.py` | Moves an object with W/A/S/D, quits on Escape. |
+| `mouse_test.py` | Follows the pointer and reacts to clicks. |
+| `ui_test.py` | Draws lines, rectangles and text into drawing lists. |
+| `button_test.py` | A button that grows on hover and counts clicks. |
+| `time_test.py` | Movement per frame against movement per second. |
 | `assets/` | Images the examples use. |
 
-All of these use **only the public API**: `tl.run()` picks the backend itself
-and nothing imports `trjoludus.platform`, so they obey the rule above.
+All of these use **only the public API**: `run()` picks the backend itself and
+nothing imports `trjoludus.platform`, so they obey the rule above.
 
 They are still catalogued as smoke tests rather than "Lesson 1", "Lesson 2" and
 so on, because a lesson needs explanation written for a beginner, not just

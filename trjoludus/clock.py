@@ -113,6 +113,16 @@ class Clock:
         """
         return 1.0 / self._delta if self._delta > 0.0 else 0.0
 
+    def now(self) -> float:
+        """The current reading of this clock's time source, in seconds.
+
+        Only meaningful compared against another reading. It exists so that
+        everything in the engine that has to measure a duration -- pacing a
+        frame, or blocking for a while -- reads the same clock, rather than
+        each growing a timer of its own.
+        """
+        return self._time()
+
     def tick(self) -> float:
         """Advance one frame and return the delta, in seconds.
 
