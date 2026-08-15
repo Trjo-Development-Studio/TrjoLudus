@@ -762,7 +762,9 @@ opinion about how a system should be implemented before it is.
 
 Rendering and image are where the work is per-pixel every frame, which is why
 they are the two that recommend the native implementation and the two that
-have one. Nothing is moved to Rust to fill in a table.
+have one. Nothing is moved to Rust to fill in a table -- a subsystem gets a
+Python implementation first, and moves only when something measured says it
+should.
 
 **Rendering and image decoding have moved.** With a native library present,
 `"auto"` uses Rust for both; without one it uses Python, and the results are

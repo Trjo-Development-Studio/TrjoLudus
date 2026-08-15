@@ -575,7 +575,7 @@ Ordered by severity.
 | 2026-08-20 | The backend is chosen per subsystem, not once for the engine | They are not one decision. A game debugging its physics in Python has no reason to give up a native renderer, and one global switch would make every subsystem's migration a breaking change for everyone else |
 | 2026-08-20 | `"auto"` is the default, and a game never has to say otherwise | The engine's implementation is not a game's problem. A project that never mentions `.engine` gets the right answer, which is the only way most games will ever be written |
 | 2026-08-20 | An explicit `"rust"` that cannot be honoured is an error | Falling back silently tells a game nothing and leaves it wondering why it is still slow. The whole reason to say `"rust"` out loud is to find out whether it is there |
-| 2026-08-20 | `"auto"` prefers native only for the systems where the work is per-pixel or per-entity | rendering, image, collision, physics, ai, pathfinding. The rest stay on Python until something is measured. Moving a system to Rust to fill in a table is how an engine acquires code nobody can maintain and nobody benefits from |
+| 2026-08-20 | `"auto"` prefers native only for the systems where the work is per-pixel or per-entity | rendering and image, which are the two that have a native implementation. A subsystem with nothing written recommends nothing at all -- superseded on 2026-08-26, when the earlier list of six became the two that exist. Moving a system to Rust to fill in a table is how an engine acquires code nobody can maintain and nobody benefits from |
 | 2026-08-20 | The boundary is a C ABI, not a Python extension | A PyO3 extension ties each build to one Python version, stops the wheel being pure Python, and puts the Python C API in the hot path. A C ABI keeps TrjoLudus installable with no native library at all, which is the ordinary case |
 | 2026-08-20 | Work crosses the boundary in bulk, and never calls back | A native subsystem does a whole frame before returning. A call per pixel would cost more than the pixel, and a callback into the interpreter from inside a loop undoes the reason the loop is native |
 | 2026-08-20 | `ctypes` is now allowed in `native/` as well as `platform/` | Both are the same kind of thing: the place where TrjoLudus meets code that is not Python. The rule was never about `platform/` in particular, and the test that enforces it now says so |
@@ -620,6 +620,15 @@ Ordered by severity.
 | 2026-08-25 | Decoded images are cached for a run, keyed by resolved path | An animation is a list of paths and a game switches pictures back and forth; the same file was being decoded again every time. Resolved, so `player.png` and `./player.png` are one entry. Images are immutable, so handing the same one out twice has no consequences |
 | 2026-08-25 | A failed load is not cached | The next attempt should try again: a file that was missing may have appeared, and remembering a failure would make that impossible |
 | 2026-08-25 | The cache belongs to the run, not the process | It goes when the run does, like the world and the drawing lists. A process-wide image cache would hold every sprite a program ever loaded for as long as it ran |
+| 2026-08-27 | Scaled text is one native call, not one per lit font pixel | It was a `fill_rect` per pixel: 226 crossings for a sixteen-character label, and *measured slower than the Python renderer* — 655 µs against 303 µs at scale two. One call is 8–17x faster than Python instead. The rule "work crosses in bulk" was already written down; this is the code catching up with it |
+| 2026-08-27 | The scaled-text edges are worked out in Python and sent across | Python rounds half to even and Rust rounds half away from zero. Sending the scale would have both sides rounding, and a scale of 2.5 would put roughly one block edge in two on a different pixel. Sending `round(n * scale)` for each edge keeps rounding where it has always been, and the two renderers stay identical pixel for pixel |
+| 2026-08-27 | A native subsystem reads and writes the world a pass at a time | `gather` and `set_positions` cross once for the whole table. The per-object `read` and `set_position` stay, because proving that Python and Rust share memory is worth doing — but a pass built out of them measured 3419 µs for 1000 objects against 6.5 µs for one bulk call, and 45x slower than the plain Python it was supposed to be replacing |
+| 2026-08-27 | Variable-length results: Python allocates, native fills, native counts | Decided once, before collision or pathfinding exists, so neither invents its own. The count returned is what there *was*, not what was stored, so a caller can ask with no buffer to get a size, or ask with one that turns out to be too small and still learn what to allocate. Nothing is allocated natively, so the convention needs no free |
+| 2026-08-27 | A counting pass is a success, not "too small" | Capacity zero means the caller wanted a number, not a filled buffer. Reporting `STATUS_TOO_SMALL` for it would make the first half of ask-then-fill answer with a status every caller has to ignore, and a status you must ignore is worse than none |
+| 2026-08-27 | A gathered object carries its slot | A collision pass reports *which* objects touched, and anything writing a result back needs somewhere to write it. The field was padding; now it is identity, and the struct is the same size it was |
+| 2026-08-27 | A subsystem supplies its own availability check | The resolver used to name `rendering` and `image` in an `if`, which meant every future native subsystem editing the resolver. Now each one registers how to find out whether it can start, and the resolver does not know which subsystem it is resolving. The check is called lazily, so importing TrjoLudus still loads no `ctypes` |
+| 2026-08-27 | Resources are keyed by kind as well as name | `("image", "player.png")`. A font or a sound loaded one day from the same path is a different resource, not the same one, and counting images never counts them. The store had become an image cache wearing a general name |
+| 2026-08-27 | The `WorldTable`'s pointers cross as `c_void_p` | Same layout, same machine word — but a typed ctypes pointer needs `ctypes.cast`, and six casts were five-sixths of the cost of building the view. The types that matter are the ones declared on the Rust side |
 | 2026-08-26 | Recommendation, availability and selection are three things | What a subsystem should use, what can be used, and what it gets. Collapsing them into one boolean is how `"auto"` ends up meaning something different in each subsystem, and how "is Rust there" and "should Rust be used" get confused |
 | 2026-08-26 | Python availability is checked, not assumed | An installation missing an implementation module is as real as one missing a native library, and a resolver that assumes one language always works cannot answer honestly when it does not. Both are asked the same way |
 | 2026-08-26 | `"auto"` falls back either way | Recommended first, then the other, then an error. The rule reads the same whichever language a subsystem recommends, so `animation` recommending Python is not a special case in the code |
@@ -898,11 +907,19 @@ explicit `argtypes` **and** `restype` on every function.
 
 Three rules hold at the boundary:
 
-1. **Work crosses in bulk.** A whole frame, a whole broad-phase pass. Nothing
-   is called once per pixel or per entity.
+1. **Work crosses in bulk.** A whole frame, a whole broad-phase pass, a whole
+   scaled string, every object in the table. Nothing is called once per pixel
+   or per entity.
 2. **Nothing calls back into Python.** Data in, results out.
-3. **Ownership is explicit.** A buffer is borrowed for one call, or owned
-   natively and freed by an explicit call.
+3. **Ownership is explicit.** Python allocates, native code borrows for
+   exactly one call, and Python is still the owner afterwards. Nothing is
+   allocated natively that Python must free -- there is no result object to
+   release, no handle to close and no global holding the last answer, so
+   there is nothing to leak and nothing to dangle.
+4. **Results that vary in length follow one convention.** Python allocates a
+   buffer, native code fills what fits and reports how many there were. A
+   capacity of zero is a counting pass; a buffer too small still comes back
+   with the true count, so a caller can size one from the answer.
 
 ### Packaging
 

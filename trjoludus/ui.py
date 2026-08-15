@@ -557,29 +557,11 @@ class Drawable:
         if scale == 1.0:
             framebuffer.draw_text(self._message, x, y, self._colour)
             return
-        self._render_scaled_text(framebuffer, self._message, x, y, scale)
-
-    def _render_scaled_text(self, framebuffer, text, x, y, scale) -> None:
-        """Draw text larger by turning each font pixel into a block.
-
-        The block is measured from the scaled edges rather than being a fixed
-        size, so a fractional scale still tiles without gaps or overlaps.
-        """
-        pen = 0
-        for character in text:
-            for column, bits in enumerate(font.columns_for(character)):
-                if not bits:
-                    continue
-                for row in range(font.CHARACTER_HEIGHT):
-                    if not bits & (1 << row):
-                        continue
-                    left = x + round((pen + column) * scale)
-                    top = y + round(row * scale)
-                    right = x + round((pen + column + 1) * scale)
-                    bottom = y + round((row + 1) * scale)
-                    framebuffer.fill_rect(left, top, max(1, right - left),
-                                          max(1, bottom - top), self._colour)
-            pen += font.CHARACTER_WIDTH + font.SPACING
+        # The renderer's own job, not the drawing's. Doing it here meant a
+        # fill_rect per lit font pixel -- 226 of them for a sixteen character
+        # label at scale two -- which crossed into native code once per pixel
+        # and measured slower than not crossing at all.
+        framebuffer.draw_text_scaled(self._message, x, y, scale, self._colour)
 
     def __repr__(self) -> str:
         what = self._message if self._kind == "text" else ""

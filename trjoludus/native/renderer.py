@@ -56,6 +56,8 @@ _READONLY = ctypes.c_char_p
 _SIZE = ctypes.c_size_t
 _INT = ctypes.c_int64
 _BYTE = ctypes.c_uint8
+#: Already-rounded block edges, worked out in Python. See draw_text_scaled.
+_EDGES = ctypes.POINTER(ctypes.c_int64)
 
 FUNCTION_SIGNATURES = {
     "trjoludus_render_clear": (
@@ -72,6 +74,10 @@ FUNCTION_SIGNATURES = {
     "trjoludus_render_draw_glyphs": (
         [_BUFFER, _SIZE, _INT, _INT, _READONLY, _SIZE, _INT, _INT, _INT,
          _INT, _INT, _BYTE, _BYTE, _BYTE], ctypes.c_int),
+    "trjoludus_render_draw_glyphs_scaled": (
+        [_BUFFER, _SIZE, _INT, _INT, _READONLY, _SIZE, _INT, _INT, _INT,
+         _EDGES, _SIZE, _EDGES, _SIZE, _INT, _INT, _BYTE, _BYTE, _BYTE],
+        ctypes.c_int),
     "trjoludus_render_draw_image": (
         [_BUFFER, _SIZE, _INT, _INT, _READONLY, _SIZE, _INT, _INT,
          ctypes.c_int, _INT, _INT], ctypes.c_int),
@@ -272,6 +278,45 @@ class NativeFramebuffer:
             bytes(columns), len(columns),
             font.CHARACTER_WIDTH, font.CHARACTER_HEIGHT,
             font.CHARACTER_WIDTH + font.SPACING,
+            round(x), round(y), red, green, blue))
+
+    def draw_text_scaled(self, text: str, x, y, scale: float, colour) -> None:
+        """Draw one line of text larger, in a single call.
+
+        The same surface :class:`trjoludus.rendering_python.Framebuffer` has,
+        and the same pixels. What crosses is the string's glyph columns and
+        two tables of already-rounded block edges -- one across the whole
+        string, one down a character -- so the native side fills blocks
+        without ever working out where an edge falls.
+
+        Sending the edges rather than the scale is what keeps this identical
+        to the Python renderer, for the reason at the top of this file:
+        rounding is Python's, and only whole numbers cross.
+
+        The alternative, and what this replaced, was a ``fill_rect`` per lit
+        font pixel. That is 226 crossings for a sixteen character label at
+        scale two, and it measured slower than the Python renderer -- a poor
+        thing for a native one to be.
+        """
+        if not text:
+            return
+        columns = bytearray()
+        for character in text:
+            columns += font.columns_for(character)
+
+        advance = font.CHARACTER_WIDTH + font.SPACING
+        across = font.block_edges(
+            (len(text) - 1) * advance + font.CHARACTER_WIDTH, scale)
+        down = font.block_edges(font.CHARACTER_HEIGHT, scale)
+        horizontal = (ctypes.c_int64 * len(across))(*across)
+        vertical = (ctypes.c_int64 * len(down))(*down)
+
+        red, green, blue = colour
+        self._check(self._call["trjoludus_render_draw_glyphs_scaled"](
+            self._view, len(self._pixels), self._width, self._height,
+            bytes(columns), len(columns),
+            font.CHARACTER_WIDTH, font.CHARACTER_HEIGHT, advance,
+            horizontal, len(horizontal), vertical, len(vertical),
             round(x), round(y), red, green, blue))
 
     def draw_image(self, image, x, y, scale: float = 1.0) -> None:

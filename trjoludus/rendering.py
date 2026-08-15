@@ -28,8 +28,25 @@ __all__ = ["engine"]
 #: it is live and writing something TrjoLudus does not know is refused.
 engine: str
 
+def _native_available() -> bool:
+    """Whether the native renderer can actually start.
+
+    Rendering needs every one of its functions in the library, not just the
+    library's word that rendering is implemented -- so this subsystem says how
+    to find out rather than leaving the resolver to know.
+
+    The import is in here rather than at the top of the file on purpose:
+    importing TrjoLudus must not load ``ctypes`` or open a library, and a
+    game that never draws never asks this question.
+    """
+    from trjoludus.native import renderer
+
+    return renderer.available()
+
+
 _SYSTEM = expose(__name__, recommends=RUST,
-                 python_implementation="trjoludus.rendering_python")
+                 python_implementation="trjoludus.rendering_python",
+                 native_check=_native_available)
 
 
 def create_framebuffer(width: int, height: int):

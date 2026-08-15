@@ -157,16 +157,63 @@ C, which would be undefined behaviour. This is why the release profile does
 *not* set `panic = "abort"`: aborting would turn a drawing bug into a dead
 process with no traceback.
 
-## The three rules at this boundary
+## The four rules at this boundary
 
-1. **Work crosses in bulk.** A native subsystem does a whole frame, or a whole
+1. **Work crosses in bulk.** A native subsystem does a whole frame, a whole
+   scaled string, every object in the table, or a whole
    broad-phase pass, before returning. Nothing is called once per pixel or per
    entity: the crossing would cost more than the work.
 2. **Nothing calls back into Python.** Data in, results out. A callback into
    the interpreter from inside a loop undoes the reason the loop is here.
-3. **Ownership is explicit.** A buffer is either owned by the caller and
-   borrowed for one call, or owned here and freed by an explicit call. Nothing
-   is freed by a garbage collector that does not know about it.
+3. **Ownership is explicit, and it is Python's.** Python allocates, this
+   library borrows for exactly one call, and Python is still the owner
+   afterwards. Nothing is allocated here that Python must free: no result
+   object to release, no handle to close, no global holding the last answer.
+   That is what makes the model leak-free by construction rather than by
+   discipline -- there is no free to forget.
+4. **No panic escapes.** Every exported function contains its own, and returns
+   a status code instead.
+
+## Results that vary in length
+
+Some work does not know how much it will produce until it has done it: how
+many pairs collided, how many steps a path took. One convention covers all of
+it, and it is rule 3 again rather than an exception to it:
+
+```text
+Python allocates a buffer  ->  Rust fills what fits  ->  Rust reports how
+                                                         many there were
+```
+
+Every such function takes a buffer, its capacity, and a `*mut usize` the true
+count is written to.
+
+| Case | Status | Count written | Buffer |
+| --- | --- | --- | --- |
+| Everything fit | `STATUS_OK` | how many there were | filled |
+| Capacity 0 (a counting pass) | `STATUS_OK` | how many there were | untouched, may be null |
+| Too small | `STATUS_TOO_SMALL` | how many there **were** | filled to capacity, never past it |
+| Bad pointer | `STATUS_NULL` | not written | untouched |
+
+The count is always what there *was*, never what was stored, so a caller can
+size a buffer from the answer and ask again. A counting pass is a success and
+not `STATUS_TOO_SMALL`: a caller who offered no room was not trying to fill
+any, and a status every caller must ignore is worse than no status.
+
+`trjoludus_world_gather` is the first function to use this, and is the shape
+the ones after it should copy.
+
+## Reading and writing the world
+
+`trjoludus_world_gather` and `trjoludus_world_set_positions` cross the
+boundary **once for a whole pass**, however many objects are in the table.
+That is the shape a native subsystem should use.
+
+`trjoludus_world_live`, `_read` and `_set_position` do the same thing one
+object at a time. They exist to prove that Python and this library are looking
+at the same memory, which is worth proving -- but a pass built out of them
+measured 3419 µs for a thousand objects against 6.5 µs for one bulk call, so
+they are not a way to do work.
 
 ## The ABI version
 

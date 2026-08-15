@@ -150,3 +150,19 @@ def measure(text: str) -> tuple[int, int]:
         len(text) * CHARACTER_WIDTH + (len(text) - 1) * SPACING,
         CHARACTER_HEIGHT,
     )
+
+
+def block_edges(units: int, scale: float) -> list[int]:
+    """Where each block edge falls when the font is drawn ``scale`` times big.
+
+    Entry ``n`` is ``round(n * scale)``, and there is one more entry than
+    there are blocks, so a block spans ``edges[n]`` to ``edges[n + 1]``.
+
+    Measured from the scaled edges rather than by multiplying a fixed size, so
+    a fractional scale still tiles without gaps or overlaps -- and worked out
+    here, once, so that the Python renderer and the native one draw from the
+    same numbers. Python rounds half to even and Rust rounds half away from
+    zero; a scale of 2.5 worked out on both sides would disagree about roughly
+    one edge in two.
+    """
+    return [round(unit * scale) for unit in range(units + 1)]

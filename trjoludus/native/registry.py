@@ -92,13 +92,26 @@ class System:
             written natively.
         python_implementation: The module the Python implementation lives in,
             or ``None`` if it has not been written.
+        native_check: What to call to find out whether the native
+            implementation can actually start, or ``None`` when the library
+            saying it implements this subsystem is answer enough.
+
+            A subsystem knows what its own implementation needs; this class
+            does not, and should not have to. Rendering needs seven functions
+            in the library and image needs two, and either of them missing one
+            would fail on the first frame rather than here. Asking the
+            subsystem is what keeps that knowledge where it belongs -- and
+            keeps this resolver from growing a branch per subsystem, which is
+            what it had before and what would have had to grow with every one
+            that follows.
     """
 
     __slots__ = ("_name", "_recommends", "_python_implementation",
                  "_engine", "_python_check", "_native_check")
 
     def __init__(self, name: str, *, recommends: "str | None",
-                 python_implementation: "str | None") -> None:
+                 python_implementation: "str | None",
+                 native_check=None) -> None:
         if recommends not in (RUST, PYTHON, None):
             raise ValueError(
                 f"a recommendation must be {RUST!r}, {PYTHON!r} or None, "
@@ -108,12 +121,13 @@ class System:
         self._recommends = recommends
         self._python_implementation = python_implementation
         self._engine = AUTO
-        # Seams, one per language. Tests need to ask what happens when an
-        # implementation is missing, and the honest way to arrange that is to
-        # say so -- not to remove a module from a running interpreter, nor to
-        # delete a library from under a process that has loaded it.
+        # One per language, supplied by whoever knows. A subsystem registers
+        # its own native check; tests set either of them to ask what happens
+        # when an implementation is missing, which is the honest way to
+        # arrange that -- not removing a module from a running interpreter,
+        # nor deleting a library from under a process that has loaded it.
         self._python_check = None
-        self._native_check = None
+        self._native_check = native_check
 
     @property
     def name(self) -> str:
@@ -180,25 +194,21 @@ class System:
 
         The library saying it implements something is necessary but not
         sufficient: a subsystem also gets to say whether it can actually
-        start. A library missing half a subsystem's functions would otherwise
-        be discovered on the first frame rather than here.
+        start, through the check it registered. A library missing half a
+        subsystem's functions would otherwise be discovered on the first frame
+        rather than here.
+
+        Nothing here knows which subsystem it is asking about. A subsystem
+        that has no check of its own is available when the library says it is
+        implemented, which is the honest default for one that has not been
+        written yet.
         """
         if self._native_check is not None:
             return bool(self._native_check())
 
         from trjoludus.native import library
 
-        if not library.implements(self._name):
-            return False
-        if self._name == "rendering":
-            from trjoludus.native import renderer
-
-            return renderer.available()
-        if self._name == "image":
-            from trjoludus.native import imaging
-
-            return imaging.available()
-        return True
+        return library.implements(self._name)
 
     def python_available(self) -> bool:
         """Whether the Python implementation can be used now.
@@ -325,9 +335,14 @@ class System:
 #: Every registered subsystem, by name, in the order they were registered.
 _SYSTEMS: dict[str, System] = {}
 
+#: What each subsystem registered as its native check, so :func:`reset` can
+#: put back what a test replaced.
+_REGISTERED_CHECKS: dict = {}
+
 
 def register(name: str, *, recommends: "str | None",
-             python_implementation: "str | None") -> System:
+             python_implementation: "str | None",
+             native_check=None) -> System:
     """Add a subsystem to the registry and return it.
 
     Called once by each subsystem module as it is imported.
@@ -341,8 +356,10 @@ def register(name: str, *, recommends: "str | None",
             f"there is already a subsystem called {name!r}."
         )
     created = System(name, recommends=recommends,
-                     python_implementation=python_implementation)
+                     python_implementation=python_implementation,
+                     native_check=native_check)
     _SYSTEMS[name] = created
+    _REGISTERED_CHECKS[name] = native_check
     return created
 
 
@@ -376,4 +393,7 @@ def reset() -> None:
     for registered in _SYSTEMS.values():
         registered._engine = AUTO
         registered._python_check = None
-        registered._native_check = None
+        # Back to the check the subsystem registered, not to none at all: that
+        # is its real availability, and a test that replaced it is undone
+        # rather than the subsystem being left with no way to answer.
+        registered._native_check = _REGISTERED_CHECKS.get(registered.name)

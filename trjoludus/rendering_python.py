@@ -188,6 +188,36 @@ class Framebuffer:
                         self.set_pixel(pen + column, y + row, colour)
             pen += font.CHARACTER_WIDTH + font.SPACING
 
+    def draw_text_scaled(self, text: str, x, y, scale: float, colour) -> None:
+        """Draw one line of text larger, each font pixel becoming a block.
+
+        The reference implementation, and the one the native renderer is
+        checked against pixel for pixel. A block is measured from the scaled
+        edges rather than being a fixed size, so a fractional scale tiles
+        without gaps, and is never thinner than one pixel, so a scale below one
+        still draws something.
+        """
+        if not text:
+            return
+        x, y = round(x), round(y)
+        advance = font.CHARACTER_WIDTH + font.SPACING
+        across = font.block_edges(
+            (len(text) - 1) * advance + font.CHARACTER_WIDTH, scale)
+        down = font.block_edges(font.CHARACTER_HEIGHT, scale)
+
+        for index, character in enumerate(text):
+            pen = index * advance
+            for column, bits in enumerate(font.columns_for(character)):
+                if not bits:
+                    continue
+                left, right = across[pen + column], across[pen + column + 1]
+                for row in range(font.CHARACTER_HEIGHT):
+                    if not bits & (1 << row):
+                        continue
+                    self.fill_rect(x + left, y + down[row],
+                                   max(1, right - left),
+                                   max(1, down[row + 1] - down[row]), colour)
+
     def draw_image(self, image, x, y, scale: float = 1.0) -> None:
         """Composite an image with its top-left corner at ``(x, y)``.
 

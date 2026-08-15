@@ -219,9 +219,12 @@ class Application:
         previous, _running = _running, self
         try:
             width, height = self._size
-            # A fresh engine state for this run: an empty world, empty drawing
-            # lists, and this run's clock. What the last run left behind is
-            # dropped rather than inherited.
+            # This run's clock goes into the state. The state itself is
+            # deliberately *not* replaced here: objects and drawing lists made
+            # before run() take part in this run, which games have relied on
+            # since Milestone 2. Isolation comes from end_run() instead, in
+            # the finally below -- what a run leaves behind is dropped when it
+            # finishes, so the next one starts empty either way.
             engine.begin_run(self._clock)
             # Which renderer draws is settled here, once, before anything has
             # drawn a frame -- so a run cannot be half on one and half on the

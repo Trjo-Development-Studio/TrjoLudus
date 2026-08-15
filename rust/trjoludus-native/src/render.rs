@@ -217,6 +217,83 @@ impl<'a> Frame<'a> {
         }
     }
 
+    /// Draw text larger, one call for the whole string.
+    ///
+    /// The same glyph columns [`Frame::draw_glyphs`] takes, drawn as blocks
+    /// rather than pixels. What makes that possible in one call is that the
+    /// caller has already worked out where every block edge falls:
+    ///
+    /// * `horizontal` holds `round(unit * scale)` for each column position
+    ///   across the whole string, one entry further than the last column, so
+    ///   a block spans `horizontal[unit]..horizontal[unit + 1]`.
+    /// * `vertical` does the same down a character, `character_height + 1`
+    ///   entries.
+    ///
+    /// Sending the edges rather than the scale is what keeps this identical
+    /// to the Python renderer. Python rounds half to even and Rust rounds half
+    /// away from zero, so a scale of 2.5 would put roughly one block edge in
+    /// two on a different pixel if each side worked it out for itself. Rounding
+    /// stays where it has always been -- in Python -- and only whole numbers
+    /// cross.
+    ///
+    /// A block is never thinner than one pixel, matching the `max(1, ...)` the
+    /// Python renderer applies, so a scale below one still draws something.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_glyphs_scaled(
+        &mut self,
+        columns: &[u8],
+        character_width: i64,
+        character_height: i64,
+        advance: i64,
+        horizontal: &[i64],
+        vertical: &[i64],
+        x: i64,
+        y: i64,
+        red: u8,
+        green: u8,
+        blue: u8,
+    ) {
+        if character_width <= 0 || character_height <= 0 || character_height > 8 {
+            return;
+        }
+        // One entry further than the last index used, both ways, or a block
+        // would have no far edge. Checked once here rather than per pixel.
+        if vertical.len() < (character_height as usize) + 1 {
+            return;
+        }
+        for (index, bits) in columns.iter().enumerate() {
+            if *bits == 0 {
+                continue;
+            }
+            let index = index as i64;
+            let character = index / character_width;
+            let column = index % character_width;
+            let unit = (character * advance + column) as usize;
+            let (Some(&left), Some(&right)) = (horizontal.get(unit), horizontal.get(unit + 1))
+            else {
+                // The caller's table does not reach this column. Nothing is
+                // guessed: the rest of the string is simply not drawn.
+                return;
+            };
+            for row in 0..character_height {
+                if bits & (1 << row) == 0 {
+                    continue;
+                }
+                let row = row as usize;
+                let (top, bottom) = (vertical[row], vertical[row + 1]);
+                self.fill_rect(
+                    x + left,
+                    y + top,
+                    (right - left).max(1),
+                    (bottom - top).max(1),
+                    red,
+                    green,
+                    blue,
+                );
+            }
+        }
+    }
+
     /// Composite an image at its own size.
     ///
     /// Two paths, chosen by whether the image has any transparency, matching

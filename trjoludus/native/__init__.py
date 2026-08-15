@@ -84,7 +84,7 @@ class _SystemModule:
 
 
 def expose(module_name: str, *, recommends: "str | None",
-           python_implementation: "str | None") -> System:
+           python_implementation: "str | None", native_check=None) -> System:
     """Register a subsystem and give its module an ``engine`` attribute.
 
     Called at the bottom of each subsystem module, once everything else in it
@@ -102,6 +102,10 @@ def expose(module_name: str, *, recommends: "str | None",
             ``PYTHON``, or ``None`` when nothing implements this yet.
         python_implementation: Where the Python implementation lives, or
             ``None`` if there is not one yet.
+        native_check: What to call to find out whether the native
+            implementation can start. A subsystem knows what its own
+            implementation needs; the resolver does not, and asking here is
+            what keeps it from having to.
 
     Returns:
         The registered :class:`System`.
@@ -111,7 +115,8 @@ def expose(module_name: str, *, recommends: "str | None",
 
     name = module_name.rsplit(".", 1)[-1]
     registered = register(name, recommends=recommends,
-                          python_implementation=python_implementation)
+                          python_implementation=python_implementation,
+                          native_check=native_check)
 
     module = sys.modules[module_name]
     # A fresh type per module: the class carries the system, so two modules

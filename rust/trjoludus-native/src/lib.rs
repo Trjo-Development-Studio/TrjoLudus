@@ -37,6 +37,35 @@
 //!    unwinding into C is undefined behaviour; a panic that becomes
 //!    [`STATUS_PANIC`] is a Python exception.
 //!
+//! # Results that vary in length
+//!
+//! Some work does not know how much it will produce until it has done it: how
+//! many pairs collided, how many steps a path took. One convention covers all
+//! of it, and it is the ownership rule again rather than an exception to it:
+//!
+//! ```text
+//! Python allocates a buffer  ->  Rust fills what fits  ->  Rust reports how
+//!                                                          many there were
+//! ```
+//!
+//! Every such function takes a buffer and its capacity, and a `*mut usize`
+//! the true count is written to. Four rules hold:
+//!
+//! 1. **The count is always written**, whether or not everything fit. It is
+//!    what there *was*, not what was stored, so a caller can size a buffer
+//!    from it and ask again.
+//! 2. **A capacity of zero is a counting pass.** The buffer may be null then,
+//!    nothing is written to it, and the status is success rather than
+//!    [`STATUS_TOO_SMALL`] -- a caller who offered no room was not trying to
+//!    fill any. That is the cheap first half of ask-then-fill, and it costs
+//!    one crossing.
+//! 3. **Too small is [`STATUS_TOO_SMALL`], not a failure.** The buffer is
+//!    filled to its capacity and the count still comes back. Nothing is ever
+//!    written past it.
+//! 4. **Nothing is allocated here.** There is no result object to free, no
+//!    handle to close and no global holding the last answer, so the rules
+//!    above are the whole of it.
+//!
 //! # Rounding lives in Python
 //!
 //! Every coordinate arriving here is already a whole number, and scaled sizes
@@ -63,7 +92,7 @@ use world::{Object, World, WorldMut};
 /// Python refuses a library whose number is not the one it expects, rather
 /// than calling a function whose arguments have since moved. Bump it whenever
 /// the meaning of any exported function changes.
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 
 /// The subsystems implemented here.
 ///
@@ -91,6 +120,13 @@ pub const STATUS_SHORT_DATA: c_int = -5;
 /// written to the caller's out-parameter, so Python can name it in the
 /// message it already raises.
 pub const STATUS_BAD_FILTER: c_int = -6;
+/// The caller's buffer was too small to hold every result.
+///
+/// Not a failure so much as a measurement: what would have been written is
+/// still counted, and the true count is in the caller's out-parameter, so a
+/// caller can size a buffer from the answer and ask again. See the
+/// variable-length results convention below.
+pub const STATUS_TOO_SMALL: c_int = -7;
 
 /// Returns the ABI version this library was built against.
 ///
@@ -347,6 +383,84 @@ pub unsafe extern "C" fn trjoludus_render_draw_glyphs(
                     character_width,
                     character_height,
                     advance,
+                    x,
+                    y,
+                    red,
+                    green,
+                    blue,
+                );
+                STATUS_OK
+            }
+            Err(status) => status,
+        }
+    })
+}
+
+/// Draw text larger, one call for the whole string.
+///
+/// Where [`trjoludus_render_draw_glyphs`] lights single pixels, this fills a
+/// block per lit pixel, and the caller says how big every block is by handing
+/// over the rounded edges rather than a scale. Doing it this way is what
+/// makes one call possible: the alternative -- and what Python did before
+/// this existed -- is a `fill_rect` per lit pixel, which for a sixteen
+/// character label at scale two is 226 crossings of this boundary per frame,
+/// and measured slower than not crossing it at all.
+///
+/// Rounding stays in Python for the reason given at the top of this file.
+///
+/// # Safety
+///
+/// As [`trjoludus_render_clear`] for the frame. `columns`, `horizontal` and
+/// `vertical` must each address their stated number of readable values for
+/// this call. Nothing is kept.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn trjoludus_render_draw_glyphs_scaled(
+    pixels: *mut u8,
+    length: usize,
+    width: i64,
+    height: i64,
+    columns: *const u8,
+    column_count: usize,
+    character_width: i64,
+    character_height: i64,
+    advance: i64,
+    horizontal: *const i64,
+    horizontal_count: usize,
+    vertical: *const i64,
+    vertical_count: usize,
+    x: i64,
+    y: i64,
+    red: u8,
+    green: u8,
+    blue: u8,
+) -> c_int {
+    guarded(|| {
+        // Safety: forwarded from this function's own contract.
+        let glyphs = match unsafe { borrow(columns, column_count) } {
+            Ok(slice) => slice,
+            Err(status) => return status,
+        };
+        if horizontal.is_null() || vertical.is_null() {
+            return STATUS_NULL;
+        }
+        // Safety: forwarded from this function's own contract.
+        let (across, down) = unsafe {
+            (
+                slice::from_raw_parts(horizontal, horizontal_count),
+                slice::from_raw_parts(vertical, vertical_count),
+            )
+        };
+        // Safety: forwarded from this function's own contract.
+        match unsafe { frame(pixels, length, width, height) } {
+            Ok(mut target) => {
+                target.draw_glyphs_scaled(
+                    glyphs,
+                    character_width,
+                    character_height,
+                    advance,
+                    across,
+                    down,
                     x,
                     y,
                     red,
@@ -661,6 +775,126 @@ pub unsafe extern "C" fn trjoludus_world_read(
             }
             None => STATUS_NO_OBJECT,
         }
+    })
+}
+
+/// Copy every live object into the caller's buffer, in one call.
+///
+/// **The read half of a bulk pass, and the shape a native subsystem should
+/// use.** One crossing walks the whole table; the per-object accessors above
+/// exist to prove that Python and this library share memory, not to be called
+/// in a loop.
+///
+/// Follows the variable-length results convention at the top of this file:
+/// `count` always receives how many live objects there are, a `capacity` of
+/// zero is a counting pass and may pass a null `out`, and a buffer too small
+/// is [`STATUS_TOO_SMALL`] with as much written as fits.
+///
+/// # Safety
+///
+/// `table` must be valid for this call. `out` must address `capacity`
+/// writable [`Object`]s, or be null when `capacity` is zero. `count` must be
+/// a valid pointer. Nothing is kept.
+#[no_mangle]
+pub unsafe extern "C" fn trjoludus_world_gather(
+    table: *const WorldTable,
+    out: *mut Object,
+    capacity: usize,
+    count: *mut usize,
+) -> c_int {
+    guarded(|| {
+        if table.is_null() || count.is_null() {
+            return STATUS_NULL;
+        }
+        if out.is_null() && capacity != 0 {
+            return STATUS_NULL;
+        }
+        // Safety: forwarded from this function's contract.
+        let table = unsafe { &*table };
+        // Safety: as above.
+        let world = match unsafe { borrow_world(table) } {
+            Ok(world) => world,
+            Err(status) => return status,
+        };
+        // Safety: `capacity` writable Objects, or none at all. An empty slice
+        // is made without touching `out`, which may be null here.
+        let room: &mut [Object] = if capacity == 0 {
+            &mut []
+        } else {
+            unsafe { slice::from_raw_parts_mut(out, capacity) }
+        };
+        let found = world.gather(room);
+        // Safety: `count` is a valid pointer per the contract.
+        unsafe { *count = found };
+        // Asking for no room is asking for the count, and a count is never
+        // too small to hold. Only a caller that offered a buffer can be told
+        // it was not big enough -- otherwise the counting half of ask-then-
+        // fill would answer with a status its caller has to ignore, and a
+        // status you must ignore is worse than no status.
+        if capacity != 0 && found > capacity {
+            STATUS_TOO_SMALL
+        } else {
+            STATUS_OK
+        }
+    })
+}
+
+/// Move many objects in one call.
+///
+/// **The write half of a bulk pass.** `slots`, `xs` and `ys` line up: entry
+/// `n` of each is one move. The number that actually moved is written to
+/// `moved` -- slots that are out of range or hold nothing are skipped, which
+/// is what an object destroyed part-way through a pass looks like.
+///
+/// Objects are still never created here, and never destroyed. Positions are
+/// the only thing this changes, in the caller's own memory, with no copy to
+/// write back.
+///
+/// # Safety
+///
+/// `table` must be valid for this call. `slots`, `xs` and `ys` must each
+/// address `count` readable values, or be null when `count` is zero. `moved`
+/// must be a valid pointer. Nothing is kept.
+#[no_mangle]
+pub unsafe extern "C" fn trjoludus_world_set_positions(
+    table: *const WorldTable,
+    slots: *const i64,
+    xs: *const f64,
+    ys: *const f64,
+    count: usize,
+    moved: *mut usize,
+) -> c_int {
+    guarded(|| {
+        if table.is_null() || moved.is_null() {
+            return STATUS_NULL;
+        }
+        if count != 0 && (slots.is_null() || xs.is_null() || ys.is_null()) {
+            return STATUS_NULL;
+        }
+        // Safety: forwarded from this function's contract.
+        let table = unsafe { &*table };
+        // Safety: as above.
+        let mut world = match unsafe { borrow_world_mut(table) } {
+            Ok(world) => world,
+            Err(status) => return status,
+        };
+        if count == 0 {
+            // Safety: `moved` is a valid pointer per the contract.
+            unsafe { *moved = 0 };
+            return STATUS_OK;
+        }
+        // Safety: `count` readable values in each, per the contract.
+        let (which, new_x, new_y) = unsafe {
+            (
+                slice::from_raw_parts(slots, count),
+                slice::from_raw_parts(xs, count),
+                slice::from_raw_parts(ys, count),
+            )
+        };
+        let changed = world.set_positions(which, new_x, new_y);
+        // Safety: `moved` is a valid pointer per the contract.
+        unsafe { *moved = changed };
+        STATUS_OK
     })
 }
 
@@ -979,7 +1213,7 @@ mod tests {
             width: 0,
             height: 0,
             flags: 0,
-            reserved: 0,
+            slot: 0,
         };
         assert_eq!(
             unsafe { trjoludus_world_read(&table, 0, &mut found) },
@@ -1021,6 +1255,333 @@ mod tests {
             unsafe { trjoludus_world_live(&table) },
             STATUS_NULL as i64
         );
+    }
+
+    /// The arrays behind a world, kept alive while a `WorldTable` points at
+    /// them. A struct rather than a tuple so the fields have their names.
+    struct Arrays {
+        x: Vec<f64>,
+        y: Vec<f64>,
+        scale: Vec<f64>,
+        width: Vec<i32>,
+        height: Vec<i32>,
+        flags: Vec<i32>,
+    }
+
+    impl Arrays {
+        /// Three objects, the last of them destroyed.
+        fn three() -> Self {
+            Arrays {
+                x: vec![1.5, 2.5, 3.5],
+                y: vec![10.5, 20.5, 30.5],
+                scale: vec![1.0, 1.0, 1.0],
+                width: vec![8, 8, 8],
+                height: vec![8, 8, 8],
+                flags: vec![world::ALIVE, world::ALIVE, 0],
+            }
+        }
+
+        /// As many live objects as asked for, all at the origin.
+        fn many(count: usize) -> Self {
+            Arrays {
+                x: vec![0.0; count],
+                y: vec![0.0; count],
+                scale: vec![1.0; count],
+                width: vec![8; count],
+                height: vec![8; count],
+                flags: vec![world::ALIVE; count],
+            }
+        }
+
+        fn table(&mut self) -> WorldTable {
+            WorldTable {
+                x: self.x.as_mut_ptr(),
+                y: self.y.as_mut_ptr(),
+                scale: self.scale.as_ptr(),
+                width: self.width.as_ptr(),
+                height: self.height.as_ptr(),
+                flags: self.flags.as_ptr(),
+                count: self.x.len(),
+            }
+        }
+    }
+
+    fn nowhere() -> Object {
+        Object { x: 0.0, y: 0.0, scale: 0.0, width: 0, height: 0, flags: 0, slot: -1 }
+    }
+
+    // --- the variable-length results convention -------------------------
+
+    #[test]
+    fn gathering_with_no_room_is_a_counting_pass() {
+        let mut parts = Arrays::three();
+        let table = parts.table();
+        let mut count = 0usize;
+        let status = unsafe {
+            trjoludus_world_gather(&table, std::ptr::null_mut(), 0, &mut count)
+        };
+        assert_eq!(status, STATUS_OK, "counting is not a failure");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn gathering_one_result() {
+        let mut parts = Arrays::three();
+        parts.flags[1] = 0;
+        let table = parts.table();
+        let mut out = [nowhere(); 4];
+        let mut count = 0usize;
+        let status =
+            unsafe { trjoludus_world_gather(&table, out.as_mut_ptr(), 4, &mut count) };
+        assert_eq!((status, count), (STATUS_OK, 1));
+        assert_eq!(out[0].x, 1.5);
+        assert_eq!(out[1].slot, -1, "wrote past the one result");
+    }
+
+    #[test]
+    fn gathering_many_results() {
+        let mut parts = Arrays::three();
+        parts.flags[2] = world::ALIVE;
+        let table = parts.table();
+        let mut out = [nowhere(); 4];
+        let mut count = 0usize;
+        let status =
+            unsafe { trjoludus_world_gather(&table, out.as_mut_ptr(), 4, &mut count) };
+        assert_eq!((status, count), (STATUS_OK, 3));
+        assert_eq!([out[0].slot, out[1].slot, out[2].slot], [0, 1, 2]);
+    }
+
+    #[test]
+    fn gathering_into_exactly_enough_room_fits() {
+        let mut parts = Arrays::three();
+        let table = parts.table();
+        let mut out = [nowhere(); 2];
+        let mut count = 0usize;
+        let status =
+            unsafe { trjoludus_world_gather(&table, out.as_mut_ptr(), 2, &mut count) };
+        assert_eq!(status, STATUS_OK, "an exact fit is not too small");
+        assert_eq!(count, 2);
+        assert_eq!(out[1].x, 2.5);
+    }
+
+    #[test]
+    fn gathering_into_too_little_room_says_so_and_still_counts() {
+        let mut parts = Arrays::three();
+        let table = parts.table();
+        let mut out = [nowhere(); 1];
+        let mut count = 0usize;
+        let status =
+            unsafe { trjoludus_world_gather(&table, out.as_mut_ptr(), 1, &mut count) };
+        assert_eq!(status, STATUS_TOO_SMALL);
+        assert_eq!(count, 2, "the true count must survive a short buffer");
+        assert_eq!(out[0].x, 1.5, "what fitted should still be there");
+    }
+
+    #[test]
+    fn gathering_from_an_empty_world_finds_nothing() {
+        let table = WorldTable {
+            x: std::ptr::null_mut(),
+            y: std::ptr::null_mut(),
+            scale: std::ptr::null(),
+            width: std::ptr::null(),
+            height: std::ptr::null(),
+            flags: std::ptr::null(),
+            count: 0,
+        };
+        let mut out = [nowhere(); 2];
+        let mut count = 9usize;
+        let status =
+            unsafe { trjoludus_world_gather(&table, out.as_mut_ptr(), 2, &mut count) };
+        assert_eq!((status, count), (STATUS_OK, 0));
+    }
+
+    #[test]
+    fn gathering_refuses_null_arguments() {
+        let mut parts = Arrays::three();
+        let table = parts.table();
+        let mut count = 0usize;
+        assert_eq!(
+            unsafe {
+                trjoludus_world_gather(std::ptr::null(), std::ptr::null_mut(), 0, &mut count)
+            },
+            STATUS_NULL
+        );
+        assert_eq!(
+            unsafe {
+                trjoludus_world_gather(&table, std::ptr::null_mut(), 0, std::ptr::null_mut())
+            },
+            STATUS_NULL,
+            "there was nowhere to report the count"
+        );
+        assert_eq!(
+            unsafe { trjoludus_world_gather(&table, std::ptr::null_mut(), 5, &mut count) },
+            STATUS_NULL,
+            "claimed room in a buffer that is not there"
+        );
+    }
+
+    // --- bulk writing ----------------------------------------------------
+
+    #[test]
+    fn a_bulk_write_moves_many_and_reports_how_many() {
+        let mut parts = Arrays::three();
+        let table = parts.table();
+        let slots = [0i64, 1];
+        let xs = [100.25f64, 200.25];
+        let ys = [300.5f64, 400.5];
+        let mut moved = 0usize;
+        let status = unsafe {
+            trjoludus_world_set_positions(
+                &table, slots.as_ptr(), xs.as_ptr(), ys.as_ptr(), 2, &mut moved)
+        };
+        assert_eq!((status, moved), (STATUS_OK, 2));
+        assert_eq!(parts.x[0], 100.25, "the caller's own memory should have changed");
+        assert_eq!(parts.y[1], 400.5);
+    }
+
+    #[test]
+    fn a_bulk_write_skips_slots_holding_nothing() {
+        let mut parts = Arrays::three();
+        let table = parts.table();
+        let slots = [0i64, 2, 99, -1];
+        let values = [7.0f64; 4];
+        let mut moved = 0usize;
+        let status = unsafe {
+            trjoludus_world_set_positions(
+                &table, slots.as_ptr(), values.as_ptr(), values.as_ptr(), 4, &mut moved)
+        };
+        assert_eq!((status, moved), (STATUS_OK, 1));
+        assert_eq!(parts.x[2], 3.5, "a destroyed object was moved");
+    }
+
+    #[test]
+    fn a_bulk_write_of_nothing_is_not_a_failure() {
+        let mut parts = Arrays::three();
+        let table = parts.table();
+        let mut moved = 9usize;
+        let status = unsafe {
+            trjoludus_world_set_positions(
+                &table, std::ptr::null(), std::ptr::null(), std::ptr::null(), 0, &mut moved)
+        };
+        assert_eq!((status, moved), (STATUS_OK, 0));
+    }
+
+    #[test]
+    fn a_bulk_write_refuses_null_arguments() {
+        let mut parts = Arrays::three();
+        let table = parts.table();
+        let slots = [0i64];
+        let values = [1.0f64];
+        let mut moved = 0usize;
+        assert_eq!(
+            unsafe {
+                trjoludus_world_set_positions(
+                    &table, std::ptr::null(), values.as_ptr(), values.as_ptr(), 1, &mut moved)
+            },
+            STATUS_NULL
+        );
+        assert_eq!(
+            unsafe {
+                trjoludus_world_set_positions(
+                    &table, slots.as_ptr(), values.as_ptr(), values.as_ptr(), 1,
+                    std::ptr::null_mut())
+            },
+            STATUS_NULL
+        );
+        assert_eq!(
+            unsafe {
+                trjoludus_world_set_positions(
+                    std::ptr::null(), slots.as_ptr(), values.as_ptr(), values.as_ptr(), 1,
+                    &mut moved)
+            },
+            STATUS_NULL
+        );
+    }
+
+    #[test]
+    fn one_bulk_call_handles_a_large_table() {
+        let count = 4000usize;
+        let mut parts = Arrays::many(count);
+        let table = parts.table();
+        let slots: Vec<i64> = (0..count as i64).collect();
+        let xs: Vec<f64> = (0..count).map(|n| n as f64 + 0.5).collect();
+        let mut moved = 0usize;
+        let status = unsafe {
+            trjoludus_world_set_positions(
+                &table, slots.as_ptr(), xs.as_ptr(), xs.as_ptr(), count, &mut moved)
+        };
+        assert_eq!((status, moved), (STATUS_OK, count));
+        assert_eq!(parts.x[count - 1], count as f64 - 0.5);
+
+        let mut out = vec![nowhere(); count];
+        let mut found = 0usize;
+        let status =
+            unsafe { trjoludus_world_gather(&table, out.as_mut_ptr(), count, &mut found) };
+        assert_eq!((status, found), (STATUS_OK, count));
+        assert_eq!(out[count - 1].x, count as f64 - 0.5);
+    }
+
+    // --- scaled glyphs ---------------------------------------------------
+
+    #[test]
+    fn scaled_glyphs_fill_a_block_per_lit_pixel() {
+        let mut buffer = vec![0u8; 8 * 8 * 4];
+        // One column, one lit bit at row 0, scaled two-fold.
+        let across = [0i64, 2];
+        let down = [0i64, 2];
+        let status = unsafe {
+            trjoludus_render_draw_glyphs_scaled(
+                buffer.as_mut_ptr(), buffer.len(), 8, 8,
+                [1u8].as_ptr(), 1, 1, 1, 1,
+                across.as_ptr(), 2, down.as_ptr(), 2,
+                0, 0, 250, 0, 0)
+        };
+        assert_eq!(status, STATUS_OK);
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let at = (y * 8 + x) * 4;
+            assert_eq!(&buffer[at..at + 4], &[0, 0, 250, 255], "block pixel {x},{y}");
+        }
+        assert_eq!(&buffer[2 * 4..3 * 4], &[0, 0, 0, 0], "the block was too wide");
+    }
+
+    #[test]
+    fn scaled_glyphs_refuse_null_edge_tables() {
+        let mut buffer = vec![0u8; 16];
+        let edges = [0i64, 1];
+        assert_eq!(
+            unsafe {
+                trjoludus_render_draw_glyphs_scaled(
+                    buffer.as_mut_ptr(), 16, 2, 2, [1u8].as_ptr(), 1, 1, 1, 1,
+                    std::ptr::null(), 0, edges.as_ptr(), 2, 0, 0, 1, 2, 3)
+            },
+            STATUS_NULL
+        );
+        assert_eq!(
+            unsafe {
+                trjoludus_render_draw_glyphs_scaled(
+                    buffer.as_mut_ptr(), 16, 2, 2, [1u8].as_ptr(), 1, 1, 1, 1,
+                    edges.as_ptr(), 2, std::ptr::null(), 0, 0, 0, 1, 2, 3)
+            },
+            STATUS_NULL
+        );
+    }
+
+    #[test]
+    fn scaled_glyphs_stop_where_the_edge_table_stops() {
+        let mut buffer = vec![0u8; 8 * 8 * 4];
+        // Two columns lit, but only enough edges for the first.
+        let across = [0i64, 1];
+        let down = [0i64, 1];
+        let status = unsafe {
+            trjoludus_render_draw_glyphs_scaled(
+                buffer.as_mut_ptr(), buffer.len(), 8, 8,
+                [1u8, 1u8].as_ptr(), 2, 1, 1, 1,
+                across.as_ptr(), 2, down.as_ptr(), 2,
+                0, 0, 250, 0, 0)
+        };
+        assert_eq!(status, STATUS_OK, "a short table is not a crash");
+        assert_eq!(&buffer[0..4], &[0, 0, 250, 255]);
+        assert_eq!(&buffer[4..8], &[0, 0, 0, 0], "drew past its edge table");
     }
 
     #[test]

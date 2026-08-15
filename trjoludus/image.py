@@ -184,7 +184,7 @@ def load_image(path) -> Image:
     # The spelling as given. A game asking twice asks with the same string,
     # so this is the case worth making fast.
     spelling = os.fspath(path)
-    found = cache.get(spelling)
+    found = cache.get(("image", spelling))
     if found is not None:
         return found
 
@@ -196,9 +196,9 @@ def load_image(path) -> Image:
     except OSError:                      # pragma: no cover -- unusual paths
         resolved = str(file)
 
-    found = cache.get(resolved)
+    found = cache.get(("image", resolved))
     if found is not None:
-        cache[spelling] = found
+        cache[("image", spelling)] = found
         return found
 
     try:
@@ -213,9 +213,9 @@ def load_image(path) -> Image:
     except ImageError as exc:
         raise ImageError(f"{file}: {exc}") from None
 
-    cache[resolved] = loaded
+    cache[("image", resolved)] = loaded
     if spelling != resolved:
-        cache[spelling] = loaded
+        cache[("image", spelling)] = loaded
     return loaded
 
 
@@ -223,12 +223,14 @@ def loaded_images(state=None) -> int:
     """How many distinct images a run is holding.
 
     Not the number of keys: one image may be reachable by more than one
-    spelling of its path. Engine-internal, for tests and the benchmark.
+    spelling of its path. Nor the number of resources -- a run holding fonts
+    or sounds one day must not have them counted here, which is why the store
+    is keyed by kind. Engine-internal, for tests and the benchmark.
     """
     from trjoludus import engine
 
-    resources = (engine.current() if state is None else state).resources
-    return len({id(image) for image in resources.values()})
+    images = engine.resources_of("image", state)
+    return len({id(image) for image in images.values()})
 
 
 #: The largest a chunk may claim to be. PNG stores lengths in four bytes but
@@ -439,8 +441,10 @@ def _backend():
 
     system = registry.system("image")
     wanted = system.engine
-    if wanted == PYTHON:
-        return None, False
+    # One question, asked one way, for every setting. Answering "python"
+    # without asking would skip the check that an explicit choice can actually
+    # be honoured -- and a rule with an exception in one subsystem is how the
+    # rule stops meaning the same thing everywhere.
     if system.resolve() == PYTHON:
         return None, False
 
@@ -571,5 +575,21 @@ from trjoludus.native import RUST, expose  # noqa: E402
 #: What a game has asked for: ``"auto"``, ``"rust"`` or ``"python"``.
 engine: str
 
+
+def _native_available() -> bool:
+    """Whether the native image implementation can actually start.
+
+    Both functions have to be in the library, not just the library's word
+    that images are implemented -- so this subsystem says how to find out
+    rather than leaving the resolver to know which subsystem it is resolving.
+
+    Imported inside, so that importing TrjoLudus still loads no ``ctypes``.
+    """
+    from trjoludus.native import imaging
+
+    return imaging.available()
+
+
 expose(__name__, recommends=RUST,
-       python_implementation="trjoludus.image")
+       python_implementation="trjoludus.image",
+       native_check=_native_available)

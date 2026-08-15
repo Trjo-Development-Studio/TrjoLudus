@@ -52,7 +52,8 @@ been tested.
 
 from array import array
 
-__all__ = ["EngineState", "ObjectTable", "current", "begin_run", "end_run"]
+__all__ = ["EngineState", "ObjectTable", "current", "begin_run", "end_run",
+           "resources_of"]
 
 #: Bit set while an object is in the scene. Cleared when it is destroyed, so
 #: a native pass can skip it without asking Python anything.
@@ -184,26 +185,35 @@ class EngineState:
         #: so that anything wanting "how long was the last frame" has one
         #: place to ask. ``None`` outside a run.
         self.clock = None
-        #: Decoded images, by the path they were loaded from. Decoding a PNG
-        #: is the most expensive thing a game does that it does not have to do
-        #: twice: an animation's frames, and an image switched back and forth,
-        #: are the same files over and over. Images are immutable, so handing
-        #: the same one out again is not a shortcut with consequences.
+        #: Everything a run has loaded from disk, by kind and by name.
         #:
-        #: One image may appear under more than one key -- the spelling a game
-        #: used, and the resolved path -- so that asking again with the same
-        #: string costs a dictionary lookup and no filesystem call.
+        #: Keys are ``(kind, name)`` -- ``("image", "player.png")`` today.
+        #: The kind is part of the key rather than implied, so that a future
+        #: font or sound loaded from the same path as an image is a different
+        #: resource rather than the same one, and so counting one kind never
+        #: counts another. Nothing here knows what kinds exist;
+        #: :func:`resources_of` is how a subsystem asks for its own.
+        #:
+        #: Decoding a PNG is the most expensive thing a game does that it does
+        #: not have to do twice: an animation's frames, and an image switched
+        #: back and forth, are the same files over and over. Images are
+        #: immutable, so handing the same one out again is not a shortcut with
+        #: consequences.
+        #:
+        #: One resource may appear under more than one name -- the spelling a
+        #: game used, and the resolved path -- so that asking again with the
+        #: same string costs a dictionary lookup and no filesystem call.
         #: :func:`trjoludus.image.loaded_images` counts images rather than
         #: keys.
         #:
         #: **Never invalidated.** A file that changes on disk during a run
-        #: keeps the image already decoded from it. There is no file watching,
-        #: no modification-time check and no eviction: a run is short, and a
-        #: game that wants the new picture starts a new run.
+        #: keeps the resource already loaded from it. There is no file
+        #: watching, no modification-time check and no eviction: a run is
+        #: short, and a game that wants the new picture starts a new run.
         #:
         #: **Released with the run.** Belongs to this state, like everything
-        #: else here, so a second run decodes afresh rather than inheriting
-        #: whatever the first happened to load. Nothing here is process-wide.
+        #: else here, so a second run loads afresh rather than inheriting
+        #: whatever the first happened to need. Nothing here is process-wide.
         #:
         #: Python owns every one of these. Native code borrows an image's
         #: bytes for the length of one drawing call and never keeps them.
@@ -212,7 +222,7 @@ class EngineState:
     def __repr__(self) -> str:
         return (f"EngineState({len(self.world)} objects, "
                 f"{len(self.drawings._lists)} drawing lists, "
-                f"{len(self.resources)} images)")
+                f"{len(self.resources)} resources)")
 
 
 #: The state everything reads. Replaced when a run begins, never mutated into
@@ -230,6 +240,21 @@ def current() -> EngineState:
     if _current is None:
         _current = EngineState()
     return _current
+
+
+def resources_of(kind: str, state=None) -> dict:
+    """Everything of one kind a run has loaded, by name.
+
+    Engine-internal. A fresh dictionary each time, so what it holds cannot be
+    changed by accident -- the store itself stays keyed by ``(kind, name)``.
+
+    Kinds do not need registering. A subsystem that loads something asks for
+    its own kind and sees nothing belonging to anybody else, which is what
+    keeps a future font from being counted as an image.
+    """
+    store = (current() if state is None else state).resources
+    return {name: value for (found, name), value in store.items()
+            if found == kind}
 
 
 def begin_run(clock=None) -> EngineState:
