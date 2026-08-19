@@ -5,7 +5,7 @@ the operating system, and it is deliberately small. It answers one question --
 *is there a native implementation of this subsystem?* -- and holds the handle
 that the implementations themselves will use.
 
-**Nothing here is required.** TrjoLudus is a Python engine that can use a
+**Nothing here is required.** TrjoLudus is a Python library that can use a
 native library, not a Python wrapper around one. With no library present
 every subsystem falls back to Python, which is exactly what happens today.
 

@@ -1,4 +1,4 @@
-"""TrjoLudus -- a lightweight 2D game engine by Trjo Development Studio.
+"""TrjoLudus -- a Python library for building 2D games through code.
 
 This module is the public API of the engine. Games should import from
 ``trjoludus`` and should not reach into private modules, because everything

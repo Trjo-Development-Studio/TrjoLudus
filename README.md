@@ -1,21 +1,29 @@
 # TrjoLudus
 
-A lightweight, custom 2D game engine/framework created by **Trjo Development Studio (TDS)**,
-written in Python and designed for Windows and Linux.
+TrjoLudus is a Python game-development library for building 2D games entirely
+through code, created by **Trjo Development Studio (TDS)** and designed for
+Windows and Linux.
+
+It is not a traditional game engine: there is no editor, no scene file, no
+project format and nothing to click. What it gives you is the systems a game
+needs -- a window, a loop, objects, drawing, input, timing, animation -- as
+Python you write, with the native implementation details kept out of the way.
 
 > **Status: pre-alpha.** On Linux, `run()` opens a **real window**, draws named
 > image objects into it, moves and destroys them, draws lines, rectangles and
-> text, changes any of it while the game runs, and reads the keyboard and
-> mouse -- including which drawing the pointer is over and which one was
-> clicked, and plays named animations. Verified on Linux/X11. A Windows backend exists but is **not
-> verified on Windows**. Sound, collision, animation, saving and public
-> multi-window support are not implemented.
+> text, changes any of it while the game runs, plays named animations, and
+> reads the keyboard and mouse -- including which drawing the pointer is over
+> and which one was clicked. Rendering and PNG decoding have native
+> implementations; everything runs in Python without them. Verified on
+> Linux/X11. A Windows backend exists but is **not verified on Windows**.
+> Sound, collision, physics, saving and public multi-window support are not
+> implemented.
 
 ## Philosophy
 
 - **Built ourselves.** TrjoLudus does not use Pygame, and does not wrap another
-  game engine or framework. The OS is accessed directly through `ctypes`.
-- **No dependencies.** The engine runs on the Python standard library alone.
+  engine or framework. The OS is accessed directly through `ctypes`.
+- **No dependencies.** It runs on the Python standard library alone.
 - **Incremental.** One subsystem at a time, tested before the next one starts.
 - **No premature engineering.** Interfaces are defined when a real feature needs
   them, not in advance.
@@ -30,7 +38,7 @@ Your game
     |
 TrjoLudus public API        <- stable, documented
     |
-Engine implementation       <- Python today; possibly Rust/C++ later
+Subsystem implementation    <- Python, or Rust where measurement asked for it
     |
 Platform layer              <- the only OS-aware code
     |
@@ -642,7 +650,7 @@ you do not need any of it** -- see [Requirements](#requirements).
 | Python 3.11+ | required | required |
 | `rustc` and `cargo` | **not needed** | needed for the native side |
 
-TrjoLudus is a Python engine that *can* use a native library, not a Python
+TrjoLudus is a Python library that *can* use a native library, not a Python
 wrapper around a Rust one. An installed TrjoLudus runs entirely on Python and
 never needs a compiler. The Rust toolchain is a contributor's tool.
 
@@ -722,7 +730,7 @@ See [`rust/README.md`](rust/README.md).
 
 ## Advanced: choosing a backend
 
-**You can skip this section.** TrjoLudus is a Python engine, everything above
+**You can skip this section.** TrjoLudus is a Python library, everything above
 is normal Python, and a game never has to mention any of what follows. There is
 no Rust in the beginner path and no Rust to learn.
 
@@ -730,10 +738,10 @@ TrjoLudus is growing native implementations of the parts where Python is the
 bottleneck. Which implementation each subsystem uses is its own setting:
 
 ```python
-from trjoludus import rendering, physics
+from trjoludus import image, rendering
 
 rendering.engine = "rust"     # insist on the native one
-physics.engine = "python"     # insist on the Python one
+image.engine = "python"       # insist on the Python one
 ```
 
 | Value | Meaning |
@@ -759,6 +767,22 @@ The subsystems, what `"auto"` prefers for each, and what exists today:
 
 The subsystems with nothing written prefer nothing: TrjoLudus does not have an
 opinion about how a system should be implemented before it is.
+
+**A registered name is not an implementation.** `collision`, `physics`, `ai`,
+`pathfinding` and `audio` have a setting and nothing behind it. Setting one is
+accepted; *using* it is an error that says so:
+
+```python
+>>> from trjoludus import physics
+>>> physics.engine = "python"          # accepted -- it is a valid setting
+>>> # ... and when something asks physics to do anything:
+EngineError: physics.engine is 'python', but there is no Python
+implementation of physics: nothing implements it yet in either language.
+```
+
+They are registered now so that an implementation can arrive without the API
+around it being invented at the same time. Each will be written in Python
+first.
 
 Rendering and image are where the work is per-pixel every frame, which is why
 they are the two that recommend the native implementation and the two that
@@ -875,16 +899,18 @@ considered much later.
 | 0 | Project foundation, platform detection | done |
 | 1 | Window creation + game loop | done (Linux; Windows unverified) |
 | 2 | Core engine: objects, drawing, input, interaction | done (Linux; Windows unverified) |
-| 3.0 | Native engine architecture (backend selection) | done (no native implementations yet) |
-| 3.x | Moving subsystems to Rust, starting with rendering | planned |
-| 4 | Collision | planned |
-| 5 | Audio | planned |
+| 3.0 | Native architecture: backend selection, packaging, shared state | done |
+| 3.1 | Native rendering | done (Linux x86-64; other platforms unverified) |
+| 3.2 | Native PNG unfiltering and opacity scan | done (Linux x86-64; other platforms unverified) |
+| 3.3 | Architecture cleanup: bulk world passes, result convention | done |
+| 4 | Collision | planned -- Python first |
+| 5 | Audio | planned -- Python first |
 | 6 | Asset management | planned |
 | 7 | Save systems | planned |
 | 8 | Camera / viewport | planned |
 | 9 | Public multi-window support | planned |
 
-Milestone 2 was built in seven steps, each tested before the next began:
+Milestone 2 was built in ten steps, each tested before the next began:
 
 | Step | Scope |
 | --- | --- |
@@ -900,8 +926,15 @@ Milestone 2 was built in seven steps, each tested before the next began:
 | 10 | Keyboard held-key state |
 
 **Not implemented, and deliberately not started:** sliders, text input,
-drag-and-drop, layout systems, animation, collision, audio, saving, cameras,
-public multi-window support, and any Rust or C++ component.
+drag-and-drop, layout systems, collision, physics, AI, pathfinding, audio,
+saving, cameras and public multi-window support.
+
+Those five subsystems have a registered name and a backend setting, and
+nothing behind either. That is deliberate -- it is what lets an implementation
+arrive without the API around it being invented at the same time -- but a
+registered name is not an implementation, and asking one of them for a backend
+says so rather than pretending. Each will be written in Python first, and
+moved only if a measurement asks for it.
 
 ## License
 

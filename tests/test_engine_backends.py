@@ -264,8 +264,8 @@ class TestWithNoNativeLibrary(BackendTestCase):
 
 
 class TestWithANativeLibrary(BackendTestCase):
-    def test_auto_prefers_the_native_one_for_always_native_systems(self):
-        """Rendering is migrated, so auto takes it when it is really there."""
+    def test_auto_prefers_the_native_one_where_it_is_recommended(self):
+        """Rendering recommends native, so auto takes it when it is there."""
         if not renderer.available():
             self.skipTest("no native renderer built here")
         library.forget()
@@ -279,13 +279,13 @@ class TestWithANativeLibrary(BackendTestCase):
         with self.assertRaises(EngineError):
             registry.system("rendering").resolve()
 
-    def test_auto_leaves_flexible_systems_on_python(self):
+    def test_auto_leaves_python_recommended_systems_on_python(self):
         """"auto" must not sweep a system into Rust just because it can."""
         self.pretend("animation")
         self.assertTrue(registry.system("animation").native_available())
         self.assertEqual(registry.system("animation").resolve(), PYTHON)
 
-    def test_a_flexible_system_can_still_be_asked_for_rust(self):
+    def test_a_python_recommended_system_can_still_be_asked_for_rust(self):
         self.pretend("animation")
         animation.engine = RUST
         self.assertEqual(registry.system("animation").resolve(), RUST)

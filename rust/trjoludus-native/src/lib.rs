@@ -2,9 +2,9 @@
 //!
 //! # What this is
 //!
-//! TrjoLudus is a Python game engine that can use a native library, not a
-//! Python wrapper around a Rust engine. Everything a game writes is Python,
-//! and stays Python whatever is underneath it:
+//! TrjoLudus is a Python game-development library that can use a native
+//! library, not a Python wrapper around a Rust engine. Everything a game
+//! writes is Python, and stays Python whatever is underneath it:
 //!
 //! ```python
 //! player.move.x(100 * time.delta)

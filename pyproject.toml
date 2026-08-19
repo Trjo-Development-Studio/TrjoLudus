@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trjoludus"
-description = "A lightweight, custom 2D game engine by Trjo Development Studio."
+description = "A Python library for building 2D games entirely through code."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

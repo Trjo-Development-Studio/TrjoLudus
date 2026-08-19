@@ -1,19 +1,29 @@
 # TrjoLudus Architecture
 
-Design decisions, and the reasoning behind them, for the TrjoLudus engine.
+Design decisions, and the reasoning behind them, for TrjoLudus -- a Python
+game-development library for building 2D games entirely through code.
 
 This document records *why* things are the way they are. It is written to be
 re-read months later, and to be read by an AI assistant that has no memory of
 the conversation the decisions came from.
 
-> **Status:** Milestones 1 (window + game loop) and 2 (core engine: objects,
-> drawing, input, interaction) are **implemented and verified on Linux/X11**.
-> The Win32 backend is implemented and structurally tested, but has **never
-> been run on Windows**.
+> **Status:** Milestones 1 (window + game loop), 2 (objects, drawing, input,
+> interaction, time, animation, held keys) and 3 (the native boundary, with
+> rendering and PNG decoding implemented in Rust) are **implemented and
+> verified on Linux/X11 x86-64**. The Win32 backend is implemented and
+> structurally tested, but has **never been run on Windows**. See
+> [Known limitations](#14-known-limitations).
 >
 > Sections 1-6 describe the platform investigation and the loop, and are still
-> current. Section 7 has been rewritten to describe the API that exists rather
-> than the one that was planned. Section 10 records how it was built.
+> current. Section 7 describes the API that exists. Section 10 records how the
+> first two milestones were built. Sections 11-13 are the current
+> architecture; section 14 is what is not verified.
+
+**Where the current architecture is written down.** Sections 11, 12 and 13
+describe what the code does today and can be read without any milestone
+report. Section 9 is a decision *log* -- a historical record, in which older
+entries are superseded by newer ones and are marked where that matters. Read
+11-13 for what is; read 9 for why.
 
 ---
 
@@ -755,7 +765,7 @@ read the same number; they do not each keep one that is supposed to agree.
 | --- | --- | --- | --- |
 | object position, scale, size, flags | `engine.ObjectTable` | the table | borrowed, not copied |
 | object name, image, animator | `scene.SceneObject` | Python | image pixels borrowed per draw |
-| decoded images | `engine.EngineState.resources` | Python | pixels borrowed per draw; never owned natively |
+| decoded images | `engine.EngineState.resources`, under `("image", path)` | Python | pixels borrowed per draw; never owned natively |
 | the scene | `engine.EngineState.world` | Python | no |
 | drawing lists | `engine.EngineState.drawings` | Python | no -- nothing native reads them yet |
 | timing | `clock.Clock`, lent to the state | Python | no |
@@ -767,10 +777,21 @@ An object's numbers are *in the table*. `obj.x` reads it and native code reads
 it, so there is nothing to synchronise -- not because synchronisation is done
 well, but because there is only one copy to begin with.
 
-### Decoded images
+### Resources
 
-`EngineState.resources` is the one place decoded images live. There is no
-second cache in the renderer, none in the animator, and none in Rust.
+`EngineState.resources` is the one place a run's loaded resources live. There
+is no second cache in the renderer, none in the animator, and none in Rust.
+
+**Keyed by kind as well as name.** An entry is `("image", path)`, not `path`.
+The kind is part of the key rather than implied, so a font or a sound loaded
+one day from the same path as an image is a different resource rather than the
+same one, and so counting one kind never counts another.
+`engine.resources_of(kind)` is how a subsystem asks for its own;
+`image.loaded_images()` counts distinct images, not keys and not resources.
+
+Images are the only kind today. This is a store with room for more, not a
+resource manager: there is no eviction, no hot reload, no asset pipeline and
+no loader registry, and none will be added before something needs one.
 
 * **Python owns them.** They are `Image` objects holding `bytes`. Native code
   borrows those bytes for the length of one drawing call and keeps nothing;
@@ -779,7 +800,7 @@ second cache in the renderer, none in the animator, and none in Rust.
   run decodes afresh. Not process-wide.
 * **They are immutable**, which is what makes handing the same one to two
   objects safe, and what makes caching them safe at all.
-* **They are keyed by path and never invalidated.** A file that changes during
+* **They are never invalidated.** A file that changes during
   a run keeps the image already decoded from it. No watching, no
   modification-time check, no eviction -- a run is short, and a game that
   wants the new picture starts a new one. One image may be reachable under
@@ -805,9 +826,55 @@ a pointer taken before an object was created would address the old block.
 
 ### What native code may change
 
-Positions. Nothing else, and only through `trjoludus_world_set_position`.
-Creating and destroying objects belongs to Python: a subsystem that could
-conjure them would be a second place where the world is decided.
+Positions. Nothing else. Creating and destroying objects belongs to Python: a
+subsystem that could conjure them would be a second place where the world is
+decided, and a native pass that finds a slot empty skips it rather than
+filling it.
+
+### A pass at a time, not an object at a time
+
+**This is the shape a native subsystem is meant to use.**
+
+| Function | What it does | Crossings |
+| --- | --- | --- |
+| `trjoludus_world_gather` | copies every live object into the caller's buffer | 1 per pass |
+| `trjoludus_world_set_positions` | moves many objects, given slots and positions | 1 per pass |
+
+A gathered object carries its `slot`, so a pass can say *which* objects it
+means and write an answer back to them.
+
+`trjoludus_world_live`, `_read` and `_set_position` do the same work one object
+at a time. They are kept because they *prove* Python and native code look at
+the same memory -- a test moves one object and sees the change from the other
+side -- and they are not a way to do work: a pass built out of them measured
+3419 µs for a thousand objects against 6.5 µs for one bulk call, which is also
+45 times slower than the plain Python it would be replacing.
+
+### Results that vary in length
+
+Whatever a future subsystem produces whose size is not known in advance --
+pairs that collided, steps in a path -- follows one convention, decided before
+any of them exists so that none invents its own. It is the ownership rule
+rather than an exception to it:
+
+```text
+Python allocates a buffer -> native fills what fits -> native reports how
+                                                       many there were
+```
+
+| Case | Status | Count written | Buffer |
+| --- | --- | --- | --- |
+| everything fit | `STATUS_OK` | how many there were | filled |
+| capacity 0 (a counting pass) | `STATUS_OK` | how many there were | untouched, may be null |
+| too small | `STATUS_TOO_SMALL` | how many there **were** | filled to capacity, never past |
+| bad pointer | `STATUS_NULL` | not written | untouched |
+
+The count is always what there *was*, never what was stored, so a caller can
+ask with no buffer to learn a size, or ask with one that turns out to be too
+small and still learn what to allocate. A counting pass is a success rather
+than `STATUS_TOO_SMALL`: a caller who offered no room was not trying to fill
+any, and a status every caller must ignore is worse than no status. Nothing is
+allocated natively, so the convention needs no free.
 
 ### Lifetime
 
@@ -831,8 +898,15 @@ thread safety is made because none has been tested.
 
 ## 13. The native boundary
 
-Milestone 3.0 built the architecture that lets subsystems move to Rust. No
-subsystem has moved; this section is the shape they will move into.
+Milestone 3 built the architecture that lets a subsystem move to Rust, and
+moved two into it: rendering, and the two hot loops of PNG decoding. This
+section is what exists.
+
+Two things are true at once and neither is negotiable. TrjoLudus is a Python
+library that *can* use a native library -- with none present every subsystem
+runs its Python implementation, which is a complete and supported way to run
+it. And where a native implementation exists, nothing a game writes changes:
+`player.move.x(100 * time.delta)` is the API either way.
 
 ### The layers
 
@@ -873,8 +947,18 @@ A recommendation is only made for a subsystem that exists. One is not invented
 for a system that may one day be written natively.
 
 **Availability** -- what can actually be used here and now, asked separately
-for each language and asked *again* every time. `native_available()` asks the
-library, and asks the subsystem's own binding whether it can really start.
+for each language and asked *again* every time.
+
+`native_available()` asks the library whether it implements the subsystem, and
+then asks the subsystem itself whether it can really start -- through a check
+the subsystem supplied when it registered. Rendering needs seven functions in
+the library and image needs two, and either missing one would fail on the
+first frame rather than at selection. The resolver does not know which
+subsystem it is resolving: a subsystem knows what its own implementation
+needs, and registering that is what keeps the resolver from growing a branch
+for every subsystem that follows. The check is called lazily, because
+importing TrjoLudus must load no `ctypes`.
+
 `python_available()` asks whether the implementation module is reachable --
 Python is a capability, not an assumption, and an installation missing a
 module is as real as one missing a library.
@@ -905,7 +989,28 @@ A C ABI shared library, loaded with `ctypes` from `native/library.py` -- the
 same discipline the platform layer uses for `libX11` and `user32`, including
 explicit `argtypes` **and** `restype` on every function.
 
-Three rules hold at the boundary:
+**One library, subsystem-prefixed functions.** Not one library per subsystem:
+the ownership, status-code and buffer conventions are genuinely shared, and
+`trjoludus_implements(name)` already gives per-subsystem granularity without
+per-file granularity.
+
+**ABI version 5**, in `rust/.../lib.rs` and `trjoludus/native/library.py`,
+which must agree. A library whose number differs is refused with both numbers
+named rather than called -- calling a function whose arguments have moved is a
+crash with no explanation. The number is bumped whenever the meaning of an
+exported function changes.
+
+**What the library implements** is its own answer, not an assumption:
+
+```rust
+pub const IMPLEMENTED: &[&str] = &["rendering", "image"];
+```
+
+A name appears there in the step that implements it. One that claimed to be
+implemented while doing nothing would make `<system>.engine = "rust"` succeed
+and change nothing, which is worse than an honest refusal.
+
+Four rules hold at the boundary:
 
 1. **Work crosses in bulk.** A whole frame, a whole broad-phase pass, a whole
    scaled string, every object in the table. Nothing is called once per pixel
@@ -940,7 +1045,7 @@ somewhere unrelated to it.
 
 ### The migrated subsystems
 
-Two so far. Rendering, and the two hot loops of image decoding:
+Two, and only two. Rendering, and the two hot loops of image decoding:
 
 | Piece | Where |
 | --- | --- |
@@ -957,7 +1062,7 @@ Image decoding is deliberately only half migrated:
 | structure, CRCs, zlib, palettes | `trjoludus/image.py`, Python, always |
 | unfiltering and the opacity scan | `rust/trjoludus-native/src/image.rs` |
 | the binding | `trjoludus/native/imaging.py` |
-| decoded images | `EngineState.resources`, keyed by path, run-scoped |
+| decoded images | `EngineState.resources`, under `("image", path)`, run-scoped |
 
 The two framebuffers are interchangeable: same methods, same arguments, same
 pixels, and `pixels` is a `bytearray` either way. A test asserts the two
@@ -975,3 +1080,53 @@ produce the same bytes.
 - `native` is not in `trjoludus.__all__`. A game never imports the boundary.
 - No Rust concept -- pointer, handle, struct, FFI type -- appears in a public
   name. Enforced by a test.
+
+---
+
+## 14. Known limitations
+
+What is not true, stated plainly, so that nothing here has to be inferred from
+silence.
+
+### Not verified
+
+Verified means it was run and observed here. Everything below has not been,
+and no claim about it is made anywhere in this repository.
+
+| | Why |
+| --- | --- |
+| **Windows** | The Win32 backend is written and structurally tested against the same backend contract as X11, but has never been run on Windows. Development is on Linux. |
+| **macOS** | No backend exists. The native library builds a `.dylib` name the loader would find, and that is all. |
+| **ARM** | Nothing prevents it -- the native library is plain C ABI and the wheel is tagged for the machine that built it -- but no ARM machine has run it. |
+| **manylinux** | The platform wheel is tagged `linux_x86_64`, which PyPI does not accept. Distributing through PyPI needs `auditwheel` or an equivalent. |
+| **Memory-safety tooling** | No Valgrind, ASan or Miri run. The ownership model is argued for and tested, not instrumented. |
+| **Thread safety** | The engine is single-threaded and assumes it. Every loader cache and the engine state itself are unguarded module globals, and a native call borrows the object arrays for its duration -- so a second thread mutating the scene during one would be a data race. No part of the engine starts a thread. |
+
+### Known and deliberately left
+
+Found by audit, judged not worth the change they would cost, and recorded so
+they are not rediscovered as surprises.
+
+* **`World::consistent()` cannot fail.** Every slice in a borrowed world is
+  built from the same `count`, so the check that they are the same length is
+  tautological -- and if the arrays genuinely disagreed, the out-of-bounds
+  read would already have happened in `from_raw_parts` before the check ran.
+  `STATUS_BAD_BUFFER` is therefore unreachable on the world path. The
+  invariant does hold, because `ObjectTable` appends to all six arrays
+  together and removes from none; it just is not this check that holds it.
+  Deliberately left outside the Phase 1 fix scope.
+* **Rendering still crosses per entity for sprites.** `app._render` loops over
+  the scene in Python and calls `draw_image` once per object, roughly 2.5 µs
+  of crossing each. Measured against the Python renderer, native wins at every
+  size above 8×8 and wins enormously with transparency, so no measurement
+  asked for a change. The object table's bulk pass is the shape to use when
+  one does.
+* **`unfilter` copies its output once.** The native side fills a `bytearray`
+  and Python returns `bytes(out)`. The Python implementation does the same, so
+  the two are equal and neither is a regression.
+* **Python availability is unfalsifiable for two subsystems.** `image` and
+  `animation` each name themselves as their own Python implementation, so
+  `python_available()` cannot return `False` for them. The rule is right and
+  the tests exercise it through the `_python_check` seam; there is simply no
+  real installation in which it fails.
+
