@@ -46,7 +46,7 @@ RECOMMENDATIONS = {
     "rendering": "rust",
     "image": "rust",
     "animation": "python",
-    "collision": None,
+    "collision": "python",
     "physics": None,
     "ai": None,
     "pathfinding": None,
@@ -139,9 +139,13 @@ class TestDefaults(BackendTestCase):
         self.assertEqual(registry.system("rendering").recommends, RUST)
         self.assertEqual(registry.system("image").recommends, RUST)
 
+    def test_the_python_subsystems_recommend_python(self):
+        self.assertEqual(registry.system("animation").recommends, PYTHON)
+        self.assertEqual(registry.system("collision").recommends, PYTHON)
+
     def test_nothing_unwritten_recommends_anything(self):
         """A recommendation is for a subsystem that exists."""
-        for name in ("collision", "physics", "ai", "pathfinding", "audio"):
+        for name in ("physics", "ai", "pathfinding", "audio"):
             with self.subTest(system=name):
                 self.assertIsNone(registry.system(name).recommends)
 
@@ -242,7 +246,7 @@ class TestWithNoNativeLibrary(BackendTestCase):
                 self.assertEqual(registry.system(name).resolve(), PYTHON)
 
     def test_a_system_with_no_implementation_at_all_says_so(self):
-        for name in ("collision", "physics", "ai", "pathfinding", "audio"):
+        for name in ("physics", "ai", "pathfinding", "audio"):
             with self.subTest(system=name):
                 with self.assertRaises(EngineError) as caught:
                     registry.system(name).resolve()
@@ -251,16 +255,26 @@ class TestWithNoNativeLibrary(BackendTestCase):
                 self.assertIn(name, message)
 
     def test_asking_such_a_system_for_python_says_so_too(self):
-        collision.engine = PYTHON
+        physics.engine = PYTHON
         with self.assertRaises(EngineError) as caught:
-            registry.system("collision").resolve()
+            registry.system("physics").resolve()
         self.assertIn("no Python implementation", str(caught.exception))
 
     def test_asking_for_python_never_gives_rust(self):
         """Explicit means explicit, in both directions."""
-        collision.engine = PYTHON
+        physics.engine = PYTHON
         with self.assertRaises(EngineError):
+            registry.system("physics").resolve()
+
+    def test_a_python_only_system_resolves_to_python(self):
+        """Collision has an implementation now, and it is Python's."""
+        self.assertEqual(registry.system("collision").resolve(), PYTHON)
+
+    def test_asking_a_python_only_system_for_rust_says_there_is_none(self):
+        collision.engine = RUST
+        with self.assertRaises(EngineError) as caught:
             registry.system("collision").resolve()
+        self.assertIn("no native implementation", str(caught.exception))
 
 
 class TestWithANativeLibrary(BackendTestCase):
@@ -835,10 +849,13 @@ class TestThePublicApiIsUnchanged(BackendTestCase):
 
     def test_the_subsystem_modules_expose_only_engine(self):
         for name, module in MODULES.items():
-            if name in ("image", "animation"):
+            if name in ("image", "animation", "collision"):
                 continue      # these are real modules with real contents
             with self.subTest(system=name):
                 self.assertEqual(module.__all__, ["engine"])
+
+    def test_the_written_subsystems_still_offer_what_they_offer(self):
+        self.assertEqual(collision.__all__, ["CollisionError", "collide"])
 
     def test_image_and_animation_keep_everything_they_had(self):
         self.assertTrue(hasattr(image, "Image"))

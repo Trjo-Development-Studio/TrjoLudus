@@ -638,6 +638,12 @@ Ordered by severity.
 | 2026-08-27 | A gathered object carries its slot | A collision pass reports *which* objects touched, and anything writing a result back needs somewhere to write it. The field was padding; now it is identity, and the struct is the same size it was |
 | 2026-08-27 | A subsystem supplies its own availability check | The resolver used to name `rendering` and `image` in an `if`, which meant every future native subsystem editing the resolver. Now each one registers how to find out whether it can start, and the resolver does not know which subsystem it is resolving. The check is called lazily, so importing TrjoLudus still loads no `ctypes` |
 | 2026-08-27 | Resources are keyed by kind as well as name | `("image", "player.png")`. A font or a sound loaded one day from the same path is a different resource, not the same one, and counting images never counts them. The store had become an image cache wearing a general name |
+| 2026-08-28 | Collision answers and does nothing else | `objects.collide(a, b)` returns True or False. It does not move, damage, destroy or animate anything, because what a collision *means* is different in every game and an engine that guessed would be wrong in most of them. TrjoLudus detects what happened; the game decides what it means |
+| 2026-08-28 | Collision bounds are read from the object table, not stored | An object's rectangle is its position, its image size and its scale -- all of which already live in `ObjectTable`. A collision box kept alongside would be a second copy of the position, which is the bug the shared table exists to prevent. Moving an object moves its hitbox because they are the same numbers |
+| 2026-08-28 | Collision does not round | Rounding is a rendering concern and happens where pixels are chosen. An object at `x = 10.5` collides from 10.5; rounding here would make a slowly moving object's bounds jump a whole pixel while its position did not |
+| 2026-08-28 | Touching is not overlapping | Every comparison is strict, so rectangles sharing an edge do not collide. Walls laid side by side would otherwise report a collision at every seam, which is the commonest thing anyone builds out of them |
+| 2026-08-28 | Visibility has nothing to do with collision | Only ALIVE is consulted. An invisible object still collides, which is what invisible walls and level boundaries are; a destroyed one does not, because it has left the scene. Coupling the two would mean hiding a wall let the player through it |
+| 2026-08-28 | A missing name warns and answers False; a name against itself raises | A typo mid-frame should be findable, not fatal -- so it warns, names the object, and points at the game's own line. Asking whether something touches itself is always true and never useful, which makes it a mistake rather than a question, and it raises `CollisionError` |
 | 2026-08-27 | The `WorldTable`'s pointers cross as `c_void_p` | Same layout, same machine word — but a typed ctypes pointer needs `ctypes.cast`, and six casts were five-sixths of the cost of building the view. The types that matter are the ones declared on the Rust side |
 | 2026-08-26 | Recommendation, availability and selection are three things | What a subsystem should use, what can be used, and what it gets. Collapsing them into one boolean is how `"auto"` ends up meaning something different in each subsystem, and how "is Rust there" and "should Rust be used" get confused |
 | 2026-08-26 | Python availability is checked, not assumed | An installation missing an implementation module is as real as one missing a native library, and a resolver that assumes one language always works cannot answer honestly when it does not. Both are asked the same way |
@@ -941,7 +947,8 @@ fixed property of the subsystem, not of the machine.
 | `rendering` | native |
 | `image` | native |
 | `animation` | Python |
-| `collision`, `physics`, `ai`, `pathfinding`, `audio` | nothing -- neither implementation exists |
+| `collision` | Python |
+| `physics`, `ai`, `pathfinding`, `audio` | nothing -- neither implementation exists |
 
 A recommendation is only made for a subsystem that exists. One is not invented
 for a system that may one day be written natively.

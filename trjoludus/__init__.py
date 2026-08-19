@@ -37,6 +37,7 @@ from trjoludus import (
     input,
     keyboard,
     mouse,
+    objects,
     pathfinding,
     physics,
     rendering,
@@ -62,6 +63,7 @@ from trjoludus.events import (
 from trjoludus.game import Game
 from trjoludus.keyboard import key
 from trjoludus.animation import AnimationError
+from trjoludus.collision import CollisionError
 from trjoludus.image import ImageError
 from trjoludus.native import EngineError
 from trjoludus.platform import PlatformName, detect_platform
@@ -79,6 +81,7 @@ __all__ = [
     # Game objects
     "create",
     "GameObject",
+    "objects",
     # User interface
     "draw",
     "color",
@@ -106,6 +109,7 @@ __all__ = [
     "UnsupportedPlatformError",
     "ImageError",
     "AnimationError",
+    "CollisionError",
     "EngineError",
     "SceneError",
     "UiError",

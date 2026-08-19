@@ -16,8 +16,8 @@ Python you write, with the native implementation details kept out of the way.
 > and which one was clicked. Rendering and PNG decoding have native
 > implementations; everything runs in Python without them. Verified on
 > Linux/X11. A Windows backend exists but is **not verified on Windows**.
-> Sound, collision, physics, saving and public multi-window support are not
-> implemented.
+> Objects can be asked whether they are overlapping. Sound, physics, saving
+> and public multi-window support are not implemented.
 
 ## Philosophy
 
@@ -68,6 +68,8 @@ trjoludus/
     keyboard.py        waiting for key presses
     time.py            waiting, frame delta and frame rate
     animation.py       named frame sequences and how they play
+    collision.py       whether two objects overlap
+    objects.py         questions a game asks about its objects
     rendering.py       the rendering subsystem's backend choice
     collision.py       ) subsystems with no implementation yet: each exists
     physics.py         ) so that its backend can be chosen before the code
@@ -609,6 +611,66 @@ everything else about the object are untouched.
 
 See [`examples/animation_test.py`](examples/animation_test.py).
 
+### Collision
+
+Ask whether two objects are overlapping:
+
+```python
+from trjoludus import objects
+
+if objects.collide("player", "zombie"):
+    zombie.animation.play("attack")
+```
+
+**TrjoLudus tells you what happened. You decide what it means.** Nothing moves,
+nothing is destroyed and no health is lost unless you write it:
+
+```python
+if objects.collide("player", "zombie"):
+    zombie.animation.play("attack")
+
+    if objects.collide("player", "zombie_sword"):
+        player.animation.play("take_damage")
+        health -= 25
+```
+
+An object collides with the rectangle it is drawn in -- where it is, and how
+big its picture is once its scale is applied. You never work that rectangle
+out yourself, and you never keep it in step with anything: move the object and
+what it collides with moves, scale it and what it collides with grows.
+
+```python
+player.set.scale(2.0)      # twice as big on screen, and twice as big to hit
+```
+
+Two things worth knowing:
+
+- **Touching is not overlapping.** An object 10 wide at `x = 0` ends exactly
+  where one at `x = 10` begins. They are side by side, not on top of each
+  other, so laying walls in a row does not report a collision at every seam.
+- **Invisible is not gone.** An object with `visible = False` still collides,
+  which is how invisible walls and level boundaries are made. A **destroyed**
+  object does not collide at all.
+
+```python
+boundary.visible = False           # can't be seen, still stops the player
+old_wall.destroy()                 # gone; collides with nothing
+```
+
+If you name an object that does not exist, you get `False` and a warning
+saying which name it was -- a typo should be easy to find, not silent:
+
+```python
+objects.collide("player", "zomby")     # False, and warns about 'zomby'
+```
+
+Asking whether something collides with *itself* is a mistake rather than a
+question, so it raises `CollisionError`:
+
+```python
+objects.collide("player", "player")    # CollisionError
+```
+
 ### Running without a window
 
 Set `TRJOLUDUS_BACKEND=null` to run the same game headless -- useful for tests,
@@ -759,7 +821,7 @@ The subsystems, what `"auto"` prefers for each, and what exists today:
 | `rendering` | native | **Python and Rust** |
 | `image` | native | **Python and Rust** |
 | `animation` | Python | Python |
-| `collision` | -- | neither yet |
+| `collision` | Python | Python |
 | `physics` | -- | neither yet |
 | `ai` | -- | neither yet |
 | `pathfinding` | -- | neither yet |
@@ -768,8 +830,8 @@ The subsystems, what `"auto"` prefers for each, and what exists today:
 The subsystems with nothing written prefer nothing: TrjoLudus does not have an
 opinion about how a system should be implemented before it is.
 
-**A registered name is not an implementation.** `collision`, `physics`, `ai`,
-`pathfinding` and `audio` have a setting and nothing behind it. Setting one is
+**A registered name is not an implementation.** `physics`, `ai`, `pathfinding`
+and `audio` have a setting and nothing behind it. Setting one is
 accepted; *using* it is an error that says so:
 
 ```python
@@ -903,7 +965,7 @@ considered much later.
 | 3.1 | Native rendering | done (Linux x86-64; other platforms unverified) |
 | 3.2 | Native PNG unfiltering and opacity scan | done (Linux x86-64; other platforms unverified) |
 | 3.3 | Architecture cleanup: bulk world passes, result convention | done |
-| 4 | Collision | planned -- Python first |
+| 4 | Collision | in progress -- `objects.collide` in Python |
 | 5 | Audio | planned -- Python first |
 | 6 | Asset management | planned |
 | 7 | Save systems | planned |
@@ -926,10 +988,10 @@ Milestone 2 was built in ten steps, each tested before the next began:
 | 10 | Keyboard held-key state |
 
 **Not implemented, and deliberately not started:** sliders, text input,
-drag-and-drop, layout systems, collision, physics, AI, pathfinding, audio,
-saving, cameras and public multi-window support.
+drag-and-drop, layout systems, physics, AI, pathfinding, audio, saving,
+cameras and public multi-window support.
 
-Those five subsystems have a registered name and a backend setting, and
+Those four subsystems have a registered name and a backend setting, and
 nothing behind either. That is deliberate -- it is what lets an implementation
 arrive without the API around it being invented at the same time -- but a
 registered name is not an implementation, and asking one of them for a backend

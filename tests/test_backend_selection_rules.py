@@ -78,13 +78,13 @@ class TestTheThreeConceptsAreSeparate(SelectionTestCase):
 
 class TestPythonAvailabilityIsChecked(SelectionTestCase):
     def test_a_subsystem_with_no_python_module_has_none(self):
-        for name in ("collision", "physics", "ai", "pathfinding", "audio"):
+        for name in ("physics", "ai", "pathfinding", "audio"):
             with self.subTest(system=name):
                 self.assertFalse(
                     registry.system(name).python_available())
 
     def test_a_subsystem_with_one_has_it(self):
-        for name in ("rendering", "image", "animation"):
+        for name in ("rendering", "image", "animation", "collision"):
             with self.subTest(system=name):
                 self.assertTrue(registry.system(name).python_available())
 
@@ -235,7 +235,7 @@ class TestAutoWithNoRecommendation(SelectionTestCase):
     """Subsystems nobody has written yet recommend nothing."""
 
     def test_they_recommend_nothing(self):
-        for name in ("collision", "physics", "ai", "pathfinding", "audio"):
+        for name in ("physics", "ai", "pathfinding", "audio"):
             with self.subTest(system=name):
                 self.assertIsNone(registry.system(name).recommends)
 
@@ -409,8 +409,7 @@ class TestNothingLeaksIntoThePublicApi(SelectionTestCase):
         self.assertEqual(set(self.star()), set(trjoludus.__all__))
 
     def test_the_subsystem_modules_still_offer_only_engine(self):
-        for name in ("rendering", "collision", "physics", "ai",
-                     "pathfinding", "audio"):
+        for name in ("rendering", "physics", "ai", "pathfinding", "audio"):
             with self.subTest(system=name):
                 self.assertEqual(MODULES[name].__all__, ["engine"])
 
