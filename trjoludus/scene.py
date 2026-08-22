@@ -60,7 +60,8 @@ class SceneObject:
     them and :class:`GameObject` reaches them.
     """
 
-    __slots__ = ("name", "_image", "removed", "animator", "_table", "_slot")
+    __slots__ = ("name", "_image", "removed", "animator", "_table", "_slot",
+                 "_groups")
 
     def __init__(self, name: str, image, x: int, y: int, table=None) -> None:
         self.name = name
@@ -76,6 +77,18 @@ class SceneObject:
         #: The animations this object knows and the one it is playing. Lives
         #: here rather than on a handle, so every handle sees the same thing.
         self.animator = Animator(self)
+        #: Which collision groups this object is in, in the order it joined
+        #: them. A dict used as an ordered set: membership is a lookup, and
+        #: the order is the one a game put them in rather than one a hash
+        #: chose.
+        #:
+        #: **It lives here, on the object.** Not in a registry keyed by name
+        #: or by table slot, because either would outlive the object it
+        #: described -- a destroyed object's membership would have to be
+        #: cleaned up by hand, and a slot handed to the next object would
+        #: arrive already in somebody else's group. Here there is nothing to
+        #: clean up: the membership goes when the object does.
+        self._groups: dict = {}
 
     # --- the numbers, which live in the table ----------------------------
 
@@ -148,6 +161,43 @@ class SceneObject:
             f"SceneObject({self.name!r}, at=({self.x}, {self.y}), "
             f"size={self._image.size}, scale={self.scale})"
         )
+
+
+def _check_group(name: str) -> str:
+    """A usable group name, or a clear complaint.
+
+    Deliberately barely a rule: a group name is a label a game chose, and
+    inventing a naming scheme for it would be a rule to remember for no
+    benefit. What is refused is a name that cannot identify anything --
+    nothing, or nothing but spaces.
+    """
+    if not isinstance(name, str):
+        raise TypeError(
+            f"a collision group name must be a string, got "
+            f"{type(name).__name__}"
+        )
+    if not name.strip():
+        raise ValueError(
+            "a collision group needs a name; got "
+            + ("an empty string" if not name else f"{name!r}, which is blank")
+        )
+    return name
+
+
+def _remember_group(name: str) -> None:
+    """Note that a group name has been used at some point in this run.
+
+    So that a group nobody has ever mentioned can be told from one that is
+    simply empty at the moment. A game whose zombies are all dead has a real
+    ``"enemy"`` group with nothing in it, and must not be nagged about it;
+    a game that asked about ``"enmeys"`` has made a typo, and should hear so.
+
+    Never pruned. A name that was real once stays real for the run, which is
+    what makes the distinction hold as objects come and go.
+    """
+    from trjoludus import engine
+
+    engine.current().groups[name] = None
 
 
 class Scene:
@@ -663,6 +713,67 @@ class GameObject:
         """
         obj = self._live()
         current_scene().remove(obj.name)
+
+    def group(self, name: str) -> "GameObject":
+        """Put this object in a collision group.
+
+        A group is a label, nothing more::
+
+            zombie.group("enemy")
+            zombie.group("undead")
+
+        An object can be in as many as it likes, and joining one never takes
+        it out of another. Joining a group it is already in changes nothing
+        and is not a mistake -- a game that labels its objects in ``on_update``
+        should not have to check first.
+
+        Groups are what :func:`trjoludus.objects.colliding` filters on::
+
+            for enemy in objects.colliding("player", group="enemy"):
+                ...
+
+        Returns:
+            This handle, so joining several reads as one line::
+
+                zombie.group("enemy").group("undead")
+
+        Raises:
+            TypeError: If ``name`` is not a string.
+            ValueError: If ``name`` is empty or only spaces.
+        """
+        obj = self._live()
+        obj._groups[_check_group(name)] = None
+        _remember_group(name)
+        return self
+
+    def ungroup(self, name: str) -> "GameObject":
+        """Take this object out of a collision group.
+
+        The others it is in are untouched. Leaving a group it was never in
+        changes nothing and is not a mistake, for the same reason joining
+        twice is not.
+
+        Returns:
+            This handle.
+
+        Raises:
+            TypeError: If ``name`` is not a string.
+            ValueError: If ``name`` is empty or only spaces.
+        """
+        obj = self._live()
+        obj._groups.pop(_check_group(name), None)
+        return self
+
+    @property
+    def groups(self) -> tuple[str, ...]:
+        """Every group this object is in, in the order it joined them.
+
+        Which is also how to ask whether it is in one::
+
+            if "enemy" in zombie.groups:
+                ...
+        """
+        return tuple(self._live()._groups)
 
     @property
     def name(self) -> str:

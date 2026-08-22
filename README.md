@@ -69,7 +69,7 @@ trjoludus/
     keyboard.py        waiting for key presses
     time.py            waiting, frame delta and frame rate
     animation.py       named frame sequences and how they play
-    collision.py       whether objects overlap, and what a thing is touching
+    collision.py       whether objects overlap, what a thing is touching, groups
     objects.py         questions a game asks about its objects
     rendering.py       the rendering subsystem's backend choice
     collision.py       ) subsystems with no implementation yet: each exists
@@ -709,6 +709,76 @@ player.move.x(500)
 objects.colliding("player")     # ()  -- worked out again, from where it is now
 ```
 
+### Groups
+
+Most of the time you do not want *everything* the player is touching -- you
+want the enemies, or the walls, or the coins. Put a label on an object and ask
+for that label:
+
+```python
+zombie.group("enemy")
+coin.group("pickup")
+
+for enemy in objects.colliding("player", group="enemy"):
+    enemy.animation.play("attack")
+```
+
+A group is nothing more than a label. It does not change how anything is
+drawn, and it does not stop anything colliding with anything else -- it is
+just a way to ask a narrower question.
+
+`collide` takes one too, when all you need is whether there is *something*
+there:
+
+```python
+if objects.collide("player", group="enemy"):
+    print("Enemy nearby!")
+```
+
+An object can wear as many labels as you like, and joining one never takes it
+out of another:
+
+```python
+zombie.group("enemy")
+zombie.group("undead")
+
+objects.colliding("player", group="enemy")     # the zombie
+objects.colliding("player", group="undead")    # the same zombie
+```
+
+Take one off with `ungroup`, and the rest stay on:
+
+```python
+zombie.ungroup("enemy")
+zombie.groups          # ('undead',)
+```
+
+`groups` is also how you ask whether an object is in one:
+
+```python
+if "enemy" in zombie.groups:
+    ...
+```
+
+Everything else works exactly as it does without a group: the same rectangles,
+the same edges, invisible objects included, destroyed ones not, and the same
+order -- a group narrows the answer without rearranging it. An object is never
+returned through its own group, so this is safely empty rather than a
+surprise:
+
+```python
+player.group("player")
+objects.colliding("player", group="player")    # ()
+```
+
+A group with nothing in it right now is perfectly ordinary -- if every zombie
+is dead, the `enemy` group is empty and TrjoLudus says nothing about it. But a
+group *no object has ever joined* is almost always a typo, so it warns:
+
+```python
+objects.colliding("player", group="enmeys")    # (), and warns about 'enmeys'
+```
+
 A name that does not exist gives you an empty result and the same warning
 `collide` gives:
 
@@ -1024,7 +1094,7 @@ considered much later.
 | 3.1 | Native rendering | done (Linux x86-64; other platforms unverified) |
 | 3.2 | Native PNG unfiltering and opacity scan | done (Linux x86-64; other platforms unverified) |
 | 3.3 | Architecture cleanup: bulk world passes, result convention | done |
-| 4 | Collision | in progress -- `objects.collide` and `objects.colliding` in Python |
+| 4 | Collision | in progress -- `collide`, `colliding` and groups, in Python |
 | 5 | Audio | planned -- Python first |
 | 6 | Asset management | planned |
 | 7 | Save systems | planned |

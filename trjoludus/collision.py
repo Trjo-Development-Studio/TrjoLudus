@@ -84,6 +84,12 @@ __all__ = ["CollisionError", "collide", "colliding"]
 engine: str
 
 
+#: Stands for "this argument was not given". A sentinel rather than ``None``
+#: so that ``collide("player", None)`` is still the type error it has always
+#: been, instead of quietly becoming "you left it out".
+_NOT_GIVEN = object()
+
+
 class CollisionError(TrjoLudusError):
     """Raised when a collision question cannot be answered as asked."""
 
@@ -165,13 +171,19 @@ def _find(name: str):
         return None
 
 
-def collide(name_a: str, name_b: str) -> bool:
-    """Whether the two named objects are overlapping right now.
+def collide(name_a: str, name_b: str = _NOT_GIVEN, *,
+            group: str = None) -> bool:
+    """Whether the named object is overlapping something right now.
 
-    ::
+    Either another named object::
 
         if objects.collide("player", "zombie"):
             zombie.animation.play("attack")
+
+    or anything at all in a group::
+
+        if objects.collide("player", group="enemy"):
+            print("something is on me")
 
     This answers a question and does nothing else. It will not move either
     object, take away health, play an animation or destroy anything -- what a
@@ -189,24 +201,55 @@ def collide(name_a: str, name_b: str) -> bool:
     invisible walls and boundaries are made of. An object that has been
     destroyed cannot.
 
+    The group form asks whether *at least one* member is overlapping, so it
+    stops at the first one it finds. An object is never counted against its
+    own group: it is always touching itself, which would make every object in
+    a group collide with that group for ever.
+
     Args:
-        name_a: The name of one object.
-        name_b: The name of the other.
+        name_a: The name of the object to ask about.
+        name_b: The name of another object to ask about. Give this or
+            ``group``, not both.
+        group: A group to ask about instead of a second object.
 
     Returns:
-        ``True`` if the two overlap, ``False`` if they do not -- and ``False``,
-        with a warning naming it, if either object does not exist.
+        ``True`` if they overlap, ``False`` if they do not -- and ``False``,
+        with a warning naming it, if an object or group does not exist.
 
     Raises:
         CollisionError: If both names are the same. An object is always
             touching itself, so the question has no useful answer.
-        TypeError: If either name is not a string.
+        TypeError: If a name is not a string.
+        ValueError: If neither or both of ``name_b`` and ``group`` are given,
+            or if a group name is blank.
     """
-    if not isinstance(name_a, str) or not isinstance(name_b, str):
-        wrong = name_a if not isinstance(name_a, str) else name_b
+    if not isinstance(name_a, str):
         raise TypeError(
             f"a game object name must be a string, got "
-            f"{type(wrong).__name__}"
+            f"{type(name_a).__name__}"
+        )
+    given = name_b is not _NOT_GIVEN
+    if given == (group is not None):
+        raise ValueError(
+            "collide() needs one thing to compare against: either another "
+            "object's name, as collide('player', 'zombie'), or a group, as "
+            "collide('player', group='enemy'). "
+            + ("Both were given." if given else "Neither was.")
+        )
+
+    if group is not None:
+        checked = _check_group_asked_for(group)
+        subject = _find(name_a)
+        if subject is None or not _participates(subject):
+            return False
+        # Stops at the first member it finds: the question was whether there
+        # is one, not how many.
+        return any(True for _ in _overlapping(subject, checked))
+
+    if not isinstance(name_b, str):
+        raise TypeError(
+            f"a game object name must be a string, got "
+            f"{type(name_b).__name__}"
         )
 
     # Asked before anything is looked up, because it is wrong whether or not
@@ -235,24 +278,32 @@ def collide(name_a: str, name_b: str) -> bool:
     return overlap(first, second)
 
 
-def _overlapping(subject):
+def _overlapping(subject, group=None):
     """Every live object overlapping ``subject``, except ``subject`` itself.
 
-    Engine-internal, and the only part of answering :func:`colliding` that
-    knows *how* the objects are found. It walks the scene, which is honest
-    about what it costs and is fast enough for the number of objects a game
-    made this way has. Something cleverer -- a grid, a tree, a native pass --
-    would replace this function and nothing else, which is why it is a
-    function.
+    Engine-internal, and the only part of answering these questions that knows
+    *how* the objects are found. It walks the scene, which is honest about
+    what it costs and is fast enough for the number of objects a game made
+    this way has. Something cleverer -- a grid, a tree, a native pass -- would
+    replace this function and nothing else, which is why it is a function.
 
-    Yields in the scene's own order, which is creation order.
+    ``group`` narrows it to the members of one group. The filter is here
+    rather than around the outside so that an index over groups would have
+    somewhere to go.
+
+    Yields in the scene's own order, which is creation order -- so a group
+    query returns its objects in the same order they would have appeared in
+    without one.
     """
     from trjoludus.scene import current_scene
 
     for other in current_scene().objects():
         # Identity, not name: the object asked about is excluded because it is
-        # that object, not because it is spelled that way.
+        # that object, not because it is spelled that way -- and not rescued
+        # by being in the group that was asked for either.
         if other is subject:
+            continue
+        if group is not None and group not in other._groups:
             continue
         if not _participates(other):
             continue
@@ -260,12 +311,48 @@ def _overlapping(subject):
             yield other
 
 
-def colliding(name: str) -> tuple:
+def _known_group(name: str) -> bool:
+    """Whether anything has ever been put in this group during the run."""
+    from trjoludus import engine as engine_state
+
+    return name in engine_state.current().groups
+
+
+def _check_group_asked_for(name: str) -> str:
+    """Validate a group a query was given, and say if nobody has used it.
+
+    A group with nothing in it right now is ordinary -- a game whose zombies
+    are all dead still has an ``"enemy"`` group -- and is answered in silence.
+    A group *no object has ever joined* is a typo, and saying so is the
+    difference between finding it and staring at a loop that never runs.
+    """
+    from trjoludus.scene import _check_group
+
+    checked = _check_group(name)
+    if not _known_group(checked):
+        warnings.warn(
+            f"no object has ever been put in the collision group "
+            f"{checked!r}, so nothing can be colliding with it. Check the "
+            f"spelling, or call .group({checked!r}) on the objects that "
+            f"belong to it.",
+            TrjoLudusWarning, stacklevel=3,
+        )
+    return checked
+
+
+def colliding(name: str, *, group: str = None) -> tuple:
     """Every object overlapping the named one, right now.
 
     ::
 
-        for enemy in objects.colliding("player"):
+        for thing in objects.colliding("player"):
+            print(thing)
+
+    ``group`` narrows it to the members of one group, which is usually what a
+    game wants -- the walls it is touching are rarely the same question as the
+    enemies it is touching::
+
+        for enemy in objects.colliding("player", group="enemy"):
             enemy.animation.play("attack")
 
     Like :func:`collide`, this answers and does nothing else. Nothing is
@@ -291,15 +378,22 @@ def colliding(name: str) -> tuple:
     answer has moved with it, because the answer is worked out from where
     things are now.
 
+    A group query returns its objects in the same order they would have come
+    back without one: the group narrows the answer, it does not reorder it.
+    The object asked about is never in the result, including when it is in the
+    group that was asked for.
+
     Args:
         name: The name of the object to ask about.
+        group: Only return members of this group.
 
     Returns:
         A tuple of handles, empty if nothing is touching it -- and empty, with
-        a warning naming it, if there is no such object.
+        a warning naming it, if the object or the group does not exist.
 
     Raises:
-        TypeError: If ``name`` is not a string.
+        TypeError: If ``name`` or ``group`` is not a string.
+        ValueError: If ``group`` is blank.
     """
     from trjoludus.scene import GameObject
 
@@ -307,6 +401,7 @@ def colliding(name: str) -> tuple:
         raise TypeError(
             f"a game object name must be a string, got {type(name).__name__}"
         )
+    checked = None if group is None else _check_group_asked_for(group)
 
     subject = _find(name)
     if subject is None or not _participates(subject):
@@ -315,7 +410,8 @@ def colliding(name: str) -> tuple:
     # One handle per object, because the scene holds one object per name and
     # each is walked once. Built here rather than kept anywhere: a handle is a
     # way of reaching an object, not a record of what was touching what.
-    return tuple(GameObject(found.name) for found in _overlapping(subject))
+    return tuple(GameObject(found.name)
+                 for found in _overlapping(subject, checked))
 
 
 expose(__name__, recommends=PYTHON,

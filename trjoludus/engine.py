@@ -166,7 +166,8 @@ class EngineState:
     :func:`current`, never built by a game.
     """
 
-    __slots__ = ("objects", "world", "drawings", "clock", "resources")
+    __slots__ = ("objects", "world", "drawings", "clock", "resources",
+                 "groups")
 
     def __init__(self) -> None:
         from trjoludus.scene import Scene
@@ -218,6 +219,18 @@ class EngineState:
         #: Python owns every one of these. Native code borrows an image's
         #: bytes for the length of one drawing call and never keeps them.
         self.resources: dict = {}
+        #: Every collision group name used during this run, in the order they
+        #: were first used. A dict as an ordered set.
+        #:
+        #: Not membership -- that lives on the objects themselves, which is
+        #: what makes it go when they do. This is only the *names*, so that a
+        #: group nobody has ever mentioned can be told from one that happens
+        #: to be empty right now. A game whose zombies are all dead still has
+        #: an "enemy" group; a game that typed "enmeys" does not, and hears
+        #: about it.
+        #:
+        #: Never pruned, and released with the run like everything else here.
+        self.groups: dict = {}
 
     def __repr__(self) -> str:
         return (f"EngineState({len(self.world)} objects, "
