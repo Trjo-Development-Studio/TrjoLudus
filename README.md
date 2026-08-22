@@ -69,7 +69,8 @@ trjoludus/
     keyboard.py        waiting for key presses
     time.py            waiting, frame delta and frame rate
     animation.py       named frame sequences and how they play
-    collision.py       whether objects overlap, what a thing is touching, groups
+    collision.py       whether objects overlap, what a thing is touching,
+                       groups, layers and masks
     objects.py         questions a game asks about its objects
     rendering.py       the rendering subsystem's backend choice
     collision.py       ) subsystems with no implementation yet: each exists
@@ -771,6 +772,113 @@ player.group("player")
 objects.colliding("player", group="player")    # ()
 ```
 
+### Layers and masks
+
+Groups let you *ask* a narrower question. Layers let you decide which things
+are allowed to collide **at all**, so you stop having to check.
+
+Every object has two settings:
+
+| | What it says |
+| --- | --- |
+| `layer` | what this object *is* -- one number from 1 to 32 |
+| `mask` | which layers it is willing to touch |
+
+```python
+player.layer = 1
+zombie.layer = 2
+
+zombie.mask = 1        # zombies only ever touch layer 1
+player.mask = 2        # the player only ever touches layer 2
+```
+
+**Both objects have to agree.** Two objects collide only when each one's mask
+contains the other's layer:
+
+```text
+A and B collide when
+    A.mask contains B.layer   and   B.mask contains A.layer
+```
+
+Permission that only one side gave is not agreement. If one mask were enough,
+something could be dragged into a collision it had deliberately opted out of,
+and `collide("a", "b")` could disagree with `collide("b", "a")`.
+
+A mask can name several layers:
+
+```python
+bullet.layer = 3
+bullet.mask = (1, 2)      # hits players and enemies, nothing else
+```
+
+and reading it back is plain Python:
+
+```python
+if 2 in bullet.mask:
+    ...
+```
+
+An empty mask means "collide with nothing", which is a useful thing to be able
+to say:
+
+```python
+ghost.mask = ()
+```
+
+#### You do not have to use them
+
+Every object starts **on layer 1, willing to touch every layer**, so a game
+that never mentions layers behaves exactly as it did before they existed.
+Setting a layer on its own changes nothing either -- filtering begins when you
+narrow a *mask*:
+
+```python
+zombie.layer = 2          # nothing has changed yet
+zombie.mask = 1           # now it only touches layer 1
+```
+
+#### Layers are not groups
+
+They answer different questions, and you will often use both:
+
+| | Question |
+| --- | --- |
+| **group** | *which objects do I want to ask about?* |
+| **layer / mask** | *which objects are allowed to collide at all?* |
+
+```python
+zombie.group("enemy")     # so you can ask for the enemies
+zombie.layer = 2          # so bullets can be told to hit them
+zombie.mask = (1, 3)      # and so they only touch players and bullets
+```
+
+A group query finds the candidates; the layer rule decides whether they count:
+
+```python
+for enemy in objects.colliding("player", group="enemy"):
+    ...                   # enemies, that the player is allowed to touch
+```
+
+#### A worked example
+
+A bullet that hits enemies and walls, but passes through the player who fired
+it:
+
+```python
+player.layer = 1
+zombie.layer = 2
+wall.layer   = 3
+bullet.layer = 4
+
+bullet.mask = (2, 3)      # enemies and walls
+zombie.mask = (1, 4)      # players and bullets
+wall.mask   = (1, 4)
+player.mask = (2, 3)      # not its own bullets
+
+for thing in objects.colliding("bullet"):
+    thing.animation.play("hit")     # the zombie and the wall; never the player
+```
+
 A group with nothing in it right now is perfectly ordinary -- if every zombie
 is dead, the `enemy` group is empty and TrjoLudus says nothing about it. But a
 group *no object has ever joined* is almost always a typo, so it warns:
@@ -1094,7 +1202,7 @@ considered much later.
 | 3.1 | Native rendering | done (Linux x86-64; other platforms unverified) |
 | 3.2 | Native PNG unfiltering and opacity scan | done (Linux x86-64; other platforms unverified) |
 | 3.3 | Architecture cleanup: bulk world passes, result convention | done |
-| 4 | Collision | in progress -- `collide`, `colliding` and groups, in Python |
+| 4 | Collision | in progress -- `collide`, `colliding`, groups, layers/masks, in Python |
 | 5 | Audio | planned -- Python first |
 | 6 | Asset management | planned |
 | 7 | Save systems | planned |

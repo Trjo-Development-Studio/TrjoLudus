@@ -14,7 +14,7 @@ collision is the bug this design exists to make impossible.
 import unittest
 import warnings
 
-from trjoludus import collision, engine, objects
+from trjoludus import collision, engine, objects, scene
 from trjoludus.collision import CollisionError
 from trjoludus.errors import TrjoLudusWarning
 from trjoludus.image import Image
@@ -2249,14 +2249,21 @@ class TestWhereGroupStateLives(GroupTestCase):
         self.ask_in("enemy")
         self.assertEqual(len(engine.current().objects), 2)
 
-    def test_groups_do_not_duplicate_position_or_size(self):
+    def test_collision_configuration_does_not_duplicate_object_data(self):
+        """What collision adds is its own configuration and nothing else.
+
+        Groups, layers and masks are new information that exists nowhere
+        else. A position, size, scale or aliveness kept here as well as in
+        the table would be a second copy, and that is what this forbids.
+        """
         self.place("zombie", 7, 3, 12, 8)
         GameObject("zombie").group("enemy")
         obj = current_scene().require("zombie")
-        # The only thing added is the membership itself.
-        self.assertEqual(set(type(obj).__slots__) - {"_groups"},
+        collision_state = {"_groups", "_layer", "_mask"}
+        self.assertEqual(set(type(obj).__slots__) - collision_state,
                          {"name", "_image", "removed", "animator", "_table",
-                          "_slot"})
+                          "_slot"},
+                         "collision grew a field that is not its own")
 
     def test_a_group_query_reads_the_table_for_positions(self):
         self.place("player", 0, 0)
@@ -2380,6 +2387,740 @@ class TestGroupsInARunningGame(GroupTestCase):
         self.play(game)
         self.assertEqual(seen, [("friendly",), ("friendly",)],
                          "each run labels its own objects from scratch")
+
+
+class LayerTestCase(GroupTestCase):
+    """Helpers for the layer and mask rules."""
+
+    def pair(self, first_layer=None, first_mask=None,
+             second_layer=None, second_mask=None):
+        """Two overlapping objects, configured however the test wants."""
+        self.place("a", 0, 0)
+        self.place("b", 5, 5)
+        one, two = GameObject("a"), GameObject("b")
+        for handle, layer, mask in ((one, first_layer, first_mask),
+                                    (two, second_layer, second_mask)):
+            if layer is not None:
+                handle.layer = layer
+            if mask is not None:
+                handle.mask = mask
+        return one, two
+
+    def touching(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", TrjoLudusWarning)
+            return objects.collide("a", "b")
+
+
+class TestDefaultsChangeNothing(LayerTestCase):
+    def test_a_new_object_is_on_layer_one(self):
+        self.place("thing", 0, 0)
+        self.assertEqual(GameObject("thing").layer, 1)
+
+    def test_a_new_object_collides_with_every_layer(self):
+        self.place("thing", 0, 0)
+        self.assertEqual(GameObject("thing").mask,
+                         tuple(range(1, scene.LAYERS + 1)))
+
+    def test_two_untouched_objects_still_collide(self):
+        self.pair()
+        self.assertTrue(self.touching())
+
+    def test_untouched_objects_still_answer_colliding(self):
+        self.place("player", 0, 0)
+        self.place("zombie", 5, 5)
+        self.assertEqual(self.names(), ["zombie"])
+
+    def test_untouched_objects_still_answer_group_queries(self):
+        self.place("player", 0, 0)
+        self.in_group("zombie", "enemy", x=5, y=5)
+        self.assertEqual(self.names_in("enemy"), ["zombie"])
+        self.assertTrue(self.any_in("enemy"))
+
+    def test_setting_a_layer_alone_changes_nothing(self):
+        """Filtering is opted into by narrowing a mask, not by choosing a
+        layer -- otherwise moving something to layer 2 would silently stop it
+        colliding with everything."""
+        one, two = self.pair(first_layer=1, second_layer=2)
+        self.assertTrue(self.touching())
+
+    def test_moving_everything_to_a_far_layer_changes_nothing(self):
+        self.pair(first_layer=32, second_layer=17)
+        self.assertTrue(self.touching())
+
+    def test_separated_objects_are_still_separated(self):
+        self.place("a", 0, 0)
+        self.place("b", 500, 500)
+        self.assertFalse(objects.collide("a", "b"))
+
+
+class TestTheRuleIsSymmetric(LayerTestCase):
+    """Each mask must contain the other's layer. Permission one side did not
+    give is not agreement."""
+
+    def test_both_agreeing_collides(self):
+        self.pair(first_layer=1, first_mask=2, second_layer=2, second_mask=1)
+        self.assertTrue(self.touching())
+
+    def test_neither_agreeing_does_not(self):
+        self.pair(first_layer=1, first_mask=3, second_layer=2, second_mask=4)
+        self.assertFalse(self.touching())
+
+    def test_only_the_first_agreeing_does_not(self):
+        one, two = self.pair(first_layer=1, first_mask=2,
+                             second_layer=2, second_mask=3)
+        self.assertIn(2, one.mask, "a lets b in")
+        self.assertNotIn(1, two.mask, "b does not let a in")
+        self.assertFalse(self.touching(), "one-sided permission is not enough")
+
+    def test_only_the_second_agreeing_does_not(self):
+        self.pair(first_layer=1, first_mask=3, second_layer=2, second_mask=1)
+        self.assertFalse(self.touching())
+
+    def test_the_answer_does_not_depend_on_which_is_named_first(self):
+        for first_mask, second_mask in ((2, 1), (2, 3), (3, 1), (3, 4)):
+            with self.subTest(masks=(first_mask, second_mask)):
+                engine.end_run()
+                self.pair(first_layer=1, first_mask=first_mask,
+                          second_layer=2, second_mask=second_mask)
+                self.assertEqual(objects.collide("a", "b"),
+                                 objects.collide("b", "a"))
+
+    def test_an_object_that_lets_nobody_in_collides_with_nothing(self):
+        one, two = self.pair(second_mask=())
+        self.assertEqual(two.mask, ())
+        self.assertFalse(self.touching())
+
+    def test_an_empty_mask_on_either_side_is_enough_to_stop_it(self):
+        self.pair(first_mask=())
+        self.assertFalse(self.touching())
+
+    def test_two_objects_on_the_same_layer_that_accept_it(self):
+        self.pair(first_layer=4, first_mask=4, second_layer=4, second_mask=4)
+        self.assertTrue(self.touching())
+
+    def test_two_objects_on_the_same_layer_that_do_not_accept_it(self):
+        self.pair(first_layer=4, first_mask=5, second_layer=4, second_mask=5)
+        self.assertFalse(self.touching())
+
+
+class TestMasksWithSeveralLayers(LayerTestCase):
+    def test_a_mask_matching_one_of_several(self):
+        one, two = self.pair(first_layer=1, first_mask=(2, 3, 4),
+                             second_layer=3, second_mask=1)
+        self.assertTrue(self.touching())
+
+    def test_a_mask_matching_none_of_several(self):
+        self.pair(first_layer=1, first_mask=(2, 3, 4),
+                  second_layer=5, second_mask=1)
+        self.assertFalse(self.touching())
+
+    def test_both_sides_with_several(self):
+        self.pair(first_layer=1, first_mask=(5, 6, 7),
+                  second_layer=6, second_mask=(1, 2, 3))
+        self.assertTrue(self.touching())
+
+    def test_a_mask_reads_back_sorted(self):
+        self.place("thing", 0, 0)
+        GameObject("thing").mask = (9, 2, 30, 1)
+        self.assertEqual(GameObject("thing").mask, (1, 2, 9, 30))
+
+    def test_a_mask_removes_duplicates(self):
+        self.place("thing", 0, 0)
+        GameObject("thing").mask = (3, 3, 3)
+        self.assertEqual(GameObject("thing").mask, (3,))
+
+    def test_a_single_number_is_allowed_as_a_mask(self):
+        self.place("thing", 0, 0)
+        GameObject("thing").mask = 7
+        self.assertEqual(GameObject("thing").mask, (7,))
+
+    def test_a_list_a_tuple_and_a_set_all_work(self):
+        self.place("thing", 0, 0)
+        handle = GameObject("thing")
+        for value in ([1, 2], (1, 2), {1, 2}, range(1, 3)):
+            with self.subTest(value=type(value).__name__):
+                handle.mask = value
+                self.assertEqual(handle.mask, (1, 2))
+
+    def test_the_whole_range_can_be_used(self):
+        self.place("thing", 0, 0)
+        handle = GameObject("thing")
+        handle.mask = tuple(range(1, scene.LAYERS + 1))
+        self.assertEqual(len(handle.mask), scene.LAYERS)
+        handle.layer = scene.LAYERS
+        self.assertEqual(handle.layer, scene.LAYERS)
+
+    def test_the_bullet_case(self):
+        """The one this exists for: a projectile that hits enemies and walls
+        but passes through the player who fired it."""
+        self.place("player", 0, 0)
+        self.place("zombie", 2, 0)
+        self.place("wall", 4, 0)
+        self.place("bullet", 1, 0)
+        GameObject("player").layer = 1
+        GameObject("zombie").layer = 2
+        GameObject("wall").layer = 3
+        bullet = GameObject("bullet")
+        bullet.layer = 4
+        bullet.mask = (2, 3)
+        for name in ("zombie", "wall"):
+            GameObject(name).mask = (1, 4)
+        GameObject("player").mask = (2, 3)
+
+        found = [f.name for f in objects.colliding("bullet")]
+        self.assertEqual(found, ["zombie", "wall"])
+        self.assertFalse(objects.collide("bullet", "player"))
+
+
+class TestFilteringAppliesEverywhere(LayerTestCase):
+    def test_collide_with_two_names(self):
+        self.pair(first_layer=1, first_mask=1, second_layer=2, second_mask=2)
+        self.assertFalse(objects.collide("a", "b"))
+
+    def test_colliding_without_a_group(self):
+        self.place("player", 0, 0)
+        self.place("zombie", 5, 5)
+        GameObject("zombie").layer = 2
+        GameObject("player").mask = 3
+        self.assertEqual(self.ask(), ())
+
+    def test_colliding_with_a_group(self):
+        self.place("player", 0, 0)
+        self.in_group("zombie", "enemy", x=5, y=5)
+        self.assertEqual(self.names_in("enemy"), ["zombie"])
+        GameObject("player").mask = 5
+        self.assertEqual(self.ask_in("enemy"), ())
+
+    def test_collide_with_a_group(self):
+        self.place("player", 0, 0)
+        self.in_group("zombie", "enemy", x=5, y=5)
+        self.assertTrue(self.any_in("enemy"))
+        GameObject("zombie").mask = 9
+        self.assertFalse(self.any_in("enemy"))
+
+    def test_a_group_narrows_and_the_mask_decides(self):
+        """Groups pick the candidates; layers decide whether they count."""
+        self.place("player", 0, 0)
+        self.in_group("near", "enemy", x=1, y=1)
+        self.in_group("also", "enemy", x=2, y=2)
+        self.assertEqual(self.names_in("enemy"), ["near", "also"])
+        GameObject("near").mask = 9        # near stops accepting layer 1
+        self.assertEqual(self.names_in("enemy"), ["also"])
+
+    def test_every_query_agrees(self):
+        self.place("player", 0, 0)
+        self.in_group("zombie", "enemy", x=5, y=5)
+        GameObject("zombie").mask = 9
+        self.assertFalse(objects.collide("player", "zombie"))
+        self.assertEqual(self.ask(), ())
+        self.assertEqual(self.ask_in("enemy"), ())
+        self.assertFalse(self.any_in("enemy"))
+
+    def test_a_blocked_object_is_still_in_its_group(self):
+        """Filtering decides collisions, not membership."""
+        self.place("player", 0, 0)
+        zombie = self.in_group("zombie", "enemy", x=5, y=5)
+        zombie.mask = 9
+        self.assertEqual(zombie.groups, ("enemy",))
+
+
+class TestFilteringDoesNotDisturbTheResults(LayerTestCase):
+    def test_ordering_is_still_creation_order(self):
+        self.place("player", 0, 0, 100, 100)
+        for name in ("first", "second", "third", "fourth"):
+            self.place(name, 0, 0, 5, 5)
+        GameObject("second").mask = 9
+        self.assertEqual(self.names(), ["first", "third", "fourth"])
+
+    def test_the_result_is_still_a_tuple_of_handles(self):
+        self.place("player", 0, 0)
+        self.place("zombie", 5, 5)
+        found = self.ask()
+        self.assertIsInstance(found, tuple)
+        self.assertIsInstance(found[0], GameObject)
+
+    def test_self_is_still_never_returned(self):
+        self.place("player", 0, 0)
+        GameObject("player").mask = 1
+        self.assertNotIn("player", self.names())
+
+    def test_self_collision_still_raises(self):
+        self.place("player", 0, 0)
+        GameObject("player").mask = ()
+        with self.assertRaises(CollisionError):
+            objects.collide("player", "player")
+
+    def test_destroyed_objects_are_still_excluded(self):
+        self.place("player", 0, 0)
+        zombie = self.place("zombie", 5, 5)
+        GameObject("zombie").layer = 2
+        GameObject("player").mask = 2
+        GameObject("zombie").mask = 1
+        self.assertEqual(self.names(), ["zombie"])
+        GameObject("zombie").destroy()
+        self.assertEqual(self.ask(), ())
+        del zombie
+
+    def test_invisible_objects_are_still_included(self):
+        self.place("player", 0, 0)
+        self.place("wall", 5, 5)
+        GameObject("wall").visible = False
+        GameObject("wall").layer = 3
+        GameObject("player").mask = 3
+        GameObject("wall").mask = 1
+        self.assertEqual(self.names(), ["wall"])
+
+    def test_there_are_still_no_duplicates(self):
+        self.place("player", 0, 0, 100, 100)
+        for index in range(6):
+            self.place(f"thing{index}", 0, 0, 5, 5)
+            GameObject(f"thing{index}").mask = (1, 1, 1)
+        found = self.names()
+        self.assertEqual(len(found), len(set(found)))
+
+    def test_touching_edges_are_still_not_a_collision(self):
+        self.pair(first_layer=1, first_mask=2, second_layer=2, second_mask=1)
+        GameObject("b").set.x(10.0)
+        GameObject("b").set.y(0.0)
+        self.assertFalse(self.touching())
+
+    def test_fractional_positions_still_work(self):
+        self.place("a", 0, 0)
+        self.place("b", 9.5, 0)
+        GameObject("a").layer = 1
+        GameObject("b").layer = 2
+        GameObject("a").mask = 2
+        GameObject("b").mask = 1
+        self.assertTrue(objects.collide("a", "b"))
+        GameObject("b").set.x(10.5)
+        self.assertFalse(objects.collide("a", "b"))
+
+    def test_movement_still_updates_the_answer(self):
+        self.place("player", 0, 0)
+        self.place("zombie", 50, 0)
+        GameObject("zombie").layer = 2
+        GameObject("player").mask = 2
+        GameObject("zombie").mask = 1
+        self.assertEqual(self.ask(), ())
+        GameObject("zombie").set.x(5.0)
+        self.assertEqual(self.names(), ["zombie"])
+
+    def test_scale_still_changes_the_answer(self):
+        self.place("player", 0, 0)
+        self.place("zombie", 20, 0)
+        GameObject("zombie").layer = 2
+        GameObject("player").mask = 2
+        GameObject("zombie").mask = 1
+        self.assertEqual(self.ask(), ())
+        GameObject("player").set.scale(4.0)
+        self.assertEqual(self.names(), ["zombie"])
+
+    def test_a_missing_name_still_warns(self):
+        self.place("player", 0, 0)
+        GameObject("player").mask = ()
+        with self.assertWarns(TrjoLudusWarning):
+            self.assertFalse(objects.collide("player", "ghost"))
+
+
+class TestLayerValidation(LayerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.place("thing", 0, 0)
+        self.handle = GameObject("thing")
+
+    def test_zero_is_refused(self):
+        for field in ("layer", "mask"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    setattr(self.handle, field, 0)
+
+    def test_negative_numbers_are_refused(self):
+        for field in ("layer", "mask"):
+            for value in (-1, -32, -1000):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(ValueError):
+                        setattr(self.handle, field, value)
+
+    def test_above_the_range_is_refused(self):
+        for field in ("layer", "mask"):
+            for value in (scene.LAYERS + 1, 64, 1000):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(ValueError):
+                        setattr(self.handle, field, value)
+
+    def test_an_enormous_number_is_refused(self):
+        for field in ("layer", "mask"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    setattr(self.handle, field, 10 ** 40)
+
+    def test_booleans_are_refused(self):
+        """True is an int, and would quietly become layer 1."""
+        for field in ("layer", "mask"):
+            for value in (True, False):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(TypeError):
+                        setattr(self.handle, field, value)
+
+    def test_non_numbers_are_refused(self):
+        for field in ("layer", "mask"):
+            for value in (1.5, None, object()):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(TypeError):
+                        setattr(self.handle, field, value)
+
+    def test_a_whole_float_is_still_refused(self):
+        for field in ("layer", "mask"):
+            with self.subTest(field=field):
+                with self.assertRaises(TypeError):
+                    setattr(self.handle, field, 2.0)
+
+    def test_a_string_is_refused_rather_than_iterated(self):
+        """"12" is a collection of characters; it is not a mask."""
+        with self.assertRaises(TypeError) as caught:
+            self.handle.mask = "12"
+        self.assertIn("collection", str(caught.exception))
+        with self.assertRaises(TypeError):
+            self.handle.mask = b"12"
+
+    def test_a_layer_cannot_be_a_collection(self):
+        """An object is on one layer; several would be a mask."""
+        for value in ((1, 2), [1], {1}):
+            with self.subTest(value=value):
+                with self.assertRaises(TypeError):
+                    self.handle.layer = value
+
+    def test_a_bad_element_inside_a_mask_is_refused(self):
+        for value in ((1, 0), (1, 99), (1, None), (1, True)):
+            with self.subTest(value=value):
+                with self.assertRaises((TypeError, ValueError)):
+                    self.handle.mask = value
+
+    def test_nothing_is_silently_truncated_or_wrapped(self):
+        before = (self.handle.layer, self.handle.mask)
+        for value in (0, 33, -1, 10 ** 40):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.handle.layer = value
+        self.assertEqual((self.handle.layer, self.handle.mask), before,
+                         "a refused value changed something anyway")
+
+    def test_the_messages_say_the_range(self):
+        with self.assertRaises(ValueError) as caught:
+            self.handle.layer = 99
+        message = str(caught.exception)
+        self.assertIn("1", message)
+        self.assertIn(str(scene.LAYERS), message)
+
+    def test_the_message_says_layers_start_at_one(self):
+        with self.assertRaises(ValueError) as caught:
+            self.handle.layer = 0
+        self.assertIn("numbered from 1", str(caught.exception))
+
+    def test_an_empty_mask_is_allowed(self):
+        """Colliding with nothing is a thing to be able to say."""
+        self.handle.mask = ()
+        self.assertEqual(self.handle.mask, ())
+        self.handle.mask = []
+        self.assertEqual(self.handle.mask, ())
+
+    def test_a_destroyed_object_cannot_be_configured(self):
+        self.handle.destroy()
+        with self.assertRaises(SceneError):
+            self.handle.layer = 2
+        with self.assertRaises(SceneError):
+            self.handle.mask = 2
+
+    def test_a_destroyed_object_cannot_be_asked(self):
+        self.handle.destroy()
+        with self.assertRaises(SceneError):
+            self.handle.layer
+        with self.assertRaises(SceneError):
+            self.handle.mask
+
+
+class TestConfigurationBelongsToTheObject(LayerTestCase):
+    def test_every_handle_sees_the_same_configuration(self):
+        self.place("thing", 0, 0)
+        GameObject("thing").layer = 5
+        GameObject("thing").mask = (2, 3)
+        self.assertEqual(GameObject("thing").layer, 5)
+        self.assertEqual(GameObject("thing").mask, (2, 3))
+
+    def test_configuring_one_object_leaves_the_others_alone(self):
+        self.place("a", 0, 0)
+        self.place("b", 5, 5)
+        GameObject("a").layer = 7
+        GameObject("a").mask = 9
+        self.assertEqual(GameObject("b").layer, 1)
+        self.assertEqual(len(GameObject("b").mask), scene.LAYERS)
+
+    def test_a_reused_slot_does_not_inherit_a_layer(self):
+        self.place("player", 0, 0)
+        first = self.place("a", 5, 5)
+        GameObject("a").layer = 9
+        GameObject("a").mask = ()
+        slot = current_scene().require("a")._slot
+        GameObject("a").destroy()
+
+        self.place("b", 5, 5)
+        self.assertEqual(current_scene().require("b")._slot, slot,
+                         "the test needs the slot to be reused")
+        self.assertEqual(GameObject("b").layer, 1)
+        self.assertEqual(len(GameObject("b").mask), scene.LAYERS)
+        self.assertTrue(objects.collide("player", "b"),
+                        "the new object inherited a dead one's empty mask")
+        del first
+
+    def test_recreating_a_name_does_not_recover_its_layer(self):
+        self.place("player", 0, 0)
+        self.place("zombie", 5, 5)
+        GameObject("zombie").mask = ()
+        self.assertFalse(objects.collide("player", "zombie"))
+        GameObject("zombie").destroy()
+        self.place("zombie", 5, 5)
+        self.assertEqual(GameObject("zombie").layer, 1)
+        self.assertTrue(objects.collide("player", "zombie"))
+
+    def test_many_rounds_of_reuse(self):
+        self.place("player", 0, 0)
+        for round_number in range(8):
+            name = f"thing{round_number}"
+            self.place(name, 5, 5)
+            self.assertTrue(objects.collide("player", name),
+                            f"round {round_number} started blocked")
+            GameObject(name).mask = ()
+            self.assertFalse(objects.collide("player", name))
+            GameObject(name).destroy()
+
+    def test_configuration_is_not_kept_in_a_registry(self):
+        self.place("player", 0, 0)
+        self.place("zombie", 5, 5)
+        GameObject("zombie").layer = 4
+        stateful = [name for name in vars(collision)
+                    if not name.startswith("__")
+                    and isinstance(getattr(collision, name),
+                                   (dict, list, set))]
+        self.assertEqual(stateful, [], f"{stateful} looks like a registry")
+
+    def test_it_is_stored_compactly(self):
+        """Two integers, not a list of relationships per object."""
+        self.place("thing", 0, 0)
+        GameObject("thing").mask = (1, 5, 9)
+        obj = current_scene().require("thing")
+        self.assertIsInstance(obj._layer, int)
+        self.assertIsInstance(obj._mask, int)
+
+    def test_a_new_run_starts_with_the_defaults(self):
+        self.place("thing", 0, 0)
+        GameObject("thing").layer = 9
+        engine.end_run()
+        self.place("thing", 0, 0)
+        self.assertEqual(GameObject("thing").layer, 1)
+
+
+class TestLayersAndGroupsAreDifferentThings(LayerTestCase):
+    def test_a_group_does_not_set_a_layer(self):
+        zombie = self.in_group("zombie", "enemy", x=0, y=0)
+        self.assertEqual(zombie.layer, 1)
+
+    def test_a_layer_does_not_join_a_group(self):
+        self.place("zombie", 0, 0)
+        GameObject("zombie").layer = 2
+        self.assertEqual(GameObject("zombie").groups, ())
+
+    def test_two_objects_can_share_a_group_and_differ_by_layer(self):
+        self.place("player", 0, 0)
+        near = self.in_group("near", "enemy", x=1, y=1)
+        far = self.in_group("far", "enemy", x=2, y=2)
+        near.layer = 2
+        far.layer = 3
+        GameObject("player").mask = 2
+        near.mask = 1
+        far.mask = 1
+        self.assertEqual(self.names_in("enemy"), ["near"],
+                         "the group holds both; the mask picked one")
+
+    def test_two_objects_can_share_a_layer_and_differ_by_group(self):
+        self.place("player", 0, 0)
+        self.in_group("a", "enemy", x=1, y=1)
+        self.in_group("b", "pickup", x=2, y=2)
+        for name in ("a", "b"):
+            GameObject(name).layer = 2
+            GameObject(name).mask = 1
+        GameObject("player").mask = 2
+        self.assertEqual(self.names_in("enemy"), ["a"])
+        self.assertEqual(self.names_in("pickup"), ["b"])
+
+    def test_ungrouping_does_not_change_the_layer(self):
+        zombie = self.in_group("zombie", "enemy", x=0, y=0)
+        zombie.layer = 6
+        zombie.ungroup("enemy")
+        self.assertEqual(zombie.layer, 6)
+
+    def test_changing_a_mask_does_not_change_membership(self):
+        zombie = self.in_group("zombie", "enemy", "undead", x=0, y=0)
+        zombie.mask = ()
+        self.assertEqual(zombie.groups, ("enemy", "undead"))
+
+
+class TestLayerQueriesOnlyAnswer(LayerTestCase):
+    def snapshot(self):
+        return [(o.name, o.x, o.y, o.scale, o.visible, tuple(o._groups),
+                 o._layer, o._mask)
+                for o in current_scene().objects()]
+
+    def crowd(self):
+        self.place("player", 0, 0)
+        for index in range(5):
+            self.in_group(f"thing{index}", "enemy", x=index, y=index)
+            GameObject(f"thing{index}").layer = index + 1
+        GameObject("player").mask = (1, 2, 3)
+
+    def test_asking_moves_nothing(self):
+        self.crowd()
+        before = self.snapshot()
+        self.ask()
+        self.assertEqual(self.snapshot(), before)
+
+    def test_asking_changes_no_layer(self):
+        self.crowd()
+        before = self.snapshot()
+        self.ask()
+        self.ask_in("enemy")
+        self.any_in("enemy")
+        objects.collide("player", "thing0")
+        self.assertEqual(self.snapshot(), before)
+
+    def test_asking_changes_no_mask(self):
+        self.crowd()
+        before = GameObject("player").mask
+        self.ask()
+        self.assertEqual(GameObject("player").mask, before)
+
+    def test_asking_destroys_nothing(self):
+        self.crowd()
+        before = set(current_scene().names)
+        self.ask()
+        self.assertEqual(set(current_scene().names), before)
+
+    def test_asking_starts_no_animation(self):
+        self.crowd()
+        self.ask()
+        for name in current_scene().names:
+            self.assertIsNone(GameObject(name).animation.current)
+
+    def test_asking_claims_no_table_slots(self):
+        self.crowd()
+        before = len(engine.current().objects)
+        self.ask()
+        self.any_in("enemy")
+        objects.collide("player", "thing0")
+        self.assertEqual(len(engine.current().objects), before)
+
+    def test_a_blocked_query_changes_nothing_either(self):
+        self.crowd()
+        GameObject("player").mask = ()
+        before = self.snapshot()
+        self.ask()
+        self.assertEqual(self.snapshot(), before)
+
+
+class TestTheApiSurfaceAfterPhaseFour(LayerTestCase):
+    def test_objects_still_offers_exactly_two_questions(self):
+        self.assertEqual(objects.__all__, ["collide", "colliding"])
+        self.assertEqual(
+            sorted(n for n in dir(objects) if not n.startswith("_")),
+            ["collide", "colliding"])
+
+    def test_the_layer_api_is_on_the_game_object(self):
+        for name in ("layer", "mask"):
+            with self.subTest(name=name):
+                self.assertIsInstance(getattr(GameObject, name), property)
+                self.assertIsNotNone(getattr(GameObject, name).fset,
+                                     f"{name} should be settable")
+
+    def test_no_layer_machinery_leaked_into_the_namespace(self):
+        for hidden in ("layer", "mask", "_eligible", "_check_layer",
+                       "_check_mask", "LAYERS", "EVERY_LAYER"):
+            with self.subTest(name=hidden):
+                self.assertFalse(hasattr(objects, hidden))
+
+    def test_the_top_level_api_is_unchanged(self):
+        import trjoludus
+
+        namespace = {}
+        exec("from trjoludus import *", namespace)
+        namespace.pop("__builtins__", None)
+        self.assertEqual(set(namespace), set(trjoludus.__all__))
+
+    def test_no_new_top_level_name_was_added(self):
+        import trjoludus
+
+        for unwanted in ("layer", "mask", "Layer", "Mask", "LAYERS",
+                         "CollisionLayer"):
+            with self.subTest(name=unwanted):
+                self.assertNotIn(unwanted, trjoludus.__all__)
+
+    def test_the_collision_module_exports_the_same_three_things(self):
+        self.assertEqual(collision.__all__,
+                         ["CollisionError", "collide", "colliding"])
+
+
+class TestLayersInARunningGame(LayerTestCase):
+    def play(self, game):
+        from trjoludus.app import Application
+        from trjoludus.platform.null import NullBackend
+
+        Application(game, size=(200, 200), max_fps=None,
+                    backend=NullBackend()).run()
+
+    def test_a_bullet_passes_through_the_player_who_fired_it(self):
+        from trjoludus import Game
+
+        picture_ = picture()
+        hit = []
+
+        class Shoot(Game):
+            def on_start(self):
+                for name, x in (("player", 0), ("bullet", 1), ("zombie", 2)):
+                    current_scene().add(SceneObject(name, picture_, x, 0))
+                GameObject("player").layer = 1
+                GameObject("zombie").layer = 2
+                bullet = GameObject("bullet")
+                bullet.layer = 3
+                bullet.mask = 2                  # enemies only
+                GameObject("zombie").mask = (1, 3)
+                GameObject("player").mask = 2
+
+            def on_update(self, dt):
+                for thing in objects.colliding("bullet"):
+                    hit.append(thing.name)
+                self.quit()
+
+        self.play(Shoot())
+        self.assertEqual(hit, ["zombie"], "the bullet hit its own shooter")
+
+    def test_layers_do_not_survive_into_the_next_run(self):
+        from trjoludus import Game
+
+        picture_ = picture()
+        seen = []
+
+        class Configure(Game):
+            def on_start(self):
+                current_scene().add(SceneObject("player", picture_, 0, 0))
+                seen.append(GameObject("player").layer)
+                GameObject("player").layer = 9
+
+            def on_update(self, dt):
+                self.quit()
+
+        game = Configure()
+        self.play(game)
+        self.play(game)
+        self.assertEqual(seen, [1, 1], "a run inherited the last one's layers")
 
 
 if __name__ == "__main__":

@@ -56,6 +56,34 @@ at ``x = 10.5`` collides from 10.5, not from 10 or 11. Rounding here would
 make a slowly moving object's bounds jump a whole pixel at a time while its
 position did not.
 
+# Layers and masks
+
+Two objects collide only if they are *allowed* to. Each one is on a **layer**
+-- what it is -- and carries a **mask**, which is the layers it is willing to
+touch::
+
+    player.layer = 1
+    zombie.layer = 2
+    zombie.mask = 1       # zombies only ever touch layer 1
+
+The rule is symmetric, and that is deliberate::
+
+    A and B may collide when
+        A's mask contains B's layer  and  B's mask contains A's layer
+
+Permission one side did not give is not agreement. If one mask were enough,
+an object could be pulled into a collision it had opted out of, and
+``collide("a", "b")`` could disagree with ``collide("b", "a")``.
+
+Everything starts on layer 1 with every layer in its mask, so the rule is
+satisfied until a game narrows a mask. Putting an object on another layer
+changes nothing on its own: filtering is something you opt into.
+
+**Layers are not groups.** A group says which objects you want to *ask*
+about; a layer and mask say which pairs are allowed to collide at all. A
+group query finds the candidates, and the layer rule decides whether they
+count.
+
 # Touching is not overlapping
 
 Two rectangles that share an edge do not collide. A 10-wide object at ``x = 0``
@@ -129,6 +157,30 @@ def _participates(obj) -> bool:
     if obj.removed:
         return False
     return bool(obj._table.flags[obj._slot] & engine_state.ALIVE)
+
+
+def _eligible(first, second) -> bool:
+    """Whether these two are allowed to collide at all.
+
+    **Both have to agree**, and that is the whole rule::
+
+        first.mask contains second.layer
+            and
+        second.mask contains first.layer
+
+    A mask is permission, and permission one side did not give is not
+    agreement. Making one side's mask enough would mean an object could be
+    dragged into collisions it had explicitly opted out of, and the answer
+    would depend on which of the two was named first -- so
+    ``collide("a", "b")`` and ``collide("b", "a")`` could disagree, which is
+    not something anyone should have to remember.
+
+    Two integer ANDs. Every object starts on layer 1 with every layer in its
+    mask, so this is satisfied for anything a game has not configured, and
+    collision behaves as it did before layers existed.
+    """
+    return bool(first._mask & second._layer
+                and second._mask & first._layer)
 
 
 def overlap(first, second) -> bool:
@@ -274,6 +326,11 @@ def collide(name_a: str, name_b: str = _NOT_GIVEN, *,
     # on it.
     if not _participates(first) or not _participates(second):
         return False
+    # Asked before the rectangles, because it is cheaper and because an
+    # object that is not allowed to collide with this one is not overlapping
+    # it as far as a game is concerned.
+    if not _eligible(first, second):
+        return False
 
     return overlap(first, second)
 
@@ -306,6 +363,9 @@ def _overlapping(subject, group=None):
         if group is not None and group not in other._groups:
             continue
         if not _participates(other):
+            continue
+        # Two integer ANDs, before the rectangles are worked out at all.
+        if not _eligible(subject, other):
             continue
         if overlap(subject, other):
             yield other

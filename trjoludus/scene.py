@@ -61,7 +61,7 @@ class SceneObject:
     """
 
     __slots__ = ("name", "_image", "removed", "animator", "_table", "_slot",
-                 "_groups")
+                 "_groups", "_layer", "_mask")
 
     def __init__(self, name: str, image, x: int, y: int, table=None) -> None:
         self.name = name
@@ -89,6 +89,22 @@ class SceneObject:
         #: arrive already in somebody else's group. Here there is nothing to
         #: clean up: the membership goes when the object does.
         self._groups: dict = {}
+        #: Which collision layer this object is on, as a single bit, and which
+        #: layers it will collide with, as a bitmask. Two integers rather than
+        #: two lists: "is this layer in that mask" is then one ``&``, and a
+        #: game with a hundred objects asks that question thousands of times a
+        #: frame.
+        #:
+        #: The defaults let everything collide with everything, which is what
+        #: collision did before layers existed. Filtering is something a game
+        #: opts into by narrowing a mask; putting an object on a different
+        #: layer on its own changes nothing.
+        #:
+        #: Here, on the object, for the same reason the groups are: it goes
+        #: when the object does, so nothing can leak into a reused slot or a
+        #: recreated name.
+        self._layer = FIRST_LAYER
+        self._mask = EVERY_LAYER
 
     # --- the numbers, which live in the table ----------------------------
 
@@ -161,6 +177,80 @@ class SceneObject:
             f"SceneObject({self.name!r}, at=({self.x}, {self.y}), "
             f"size={self._image.size}, scale={self.scale})"
         )
+
+
+#: How many collision layers there are. Thirty-two is far more categories
+#: than a game made this way will use, and it keeps a layer a small number
+#: rather than something to look up.
+LAYERS = 32
+
+#: The layer every object starts on.
+FIRST_LAYER = 1 << 0
+
+#: A mask with every layer in it: what an object collides with until a game
+#: says otherwise. This is what makes layers opt-in -- with these defaults the
+#: rule below is always satisfied, so collision behaves exactly as it did
+#: before layers existed.
+EVERY_LAYER = (1 << LAYERS) - 1
+
+
+def _check_layer(value, what: str = "a collision layer") -> int:
+    """One layer number, 1 to :data:`LAYERS`, as the bit that stands for it.
+
+    Layers are numbered from one because that is how anyone counts them --
+    "layer 1" and "layer 2", not "bit 0" and "bit 1". The bit is an
+    implementation detail and stays one.
+    """
+    # bool first: True is an int, and a layer of True would quietly be layer 1.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"{what} must be a whole number from 1 to {LAYERS}, got "
+            f"{type(value).__name__}"
+        )
+    if not 1 <= value <= LAYERS:
+        raise ValueError(
+            f"{what} must be from 1 to {LAYERS}, got {value}. "
+            + ("Layers are numbered from 1." if value < 1 else
+               f"TrjoLudus has {LAYERS} layers, which is more than a game "
+               f"normally needs.")
+        )
+    return 1 << (value - 1)
+
+
+def _check_mask(value) -> int:
+    """A collection of layer numbers, as one bitmask.
+
+    A single number is allowed, because collides-with-one-layer is the common
+    case and ``mask = 2`` should not have to be written ``mask = (2,)``.
+    """
+    if isinstance(value, bool) or isinstance(value, int):
+        return _check_layer(value, "a collision mask")
+    # A string is a collection, so "12" would quietly become layers "1" and
+    # "2" and then fail with a message about characters. Refused here, where
+    # the message can say what was actually wrong.
+    if isinstance(value, (str, bytes)):
+        raise TypeError(
+            f"a collision mask must be a layer number or a collection of "
+            f"them, got {type(value).__name__} {value!r}"
+        )
+    try:
+        layers = tuple(value)
+    except TypeError:
+        raise TypeError(
+            f"a collision mask must be a layer number or a collection of "
+            f"them, got {type(value).__name__}"
+        ) from None
+
+    mask = 0
+    for layer in layers:
+        mask |= _check_layer(layer, "a collision mask")
+    return mask
+
+
+def _layers_of(mask: int) -> tuple:
+    """The layer numbers in a mask, smallest first."""
+    return tuple(number for number in range(1, LAYERS + 1)
+                 if mask & (1 << (number - 1)))
 
 
 def _check_group(name: str) -> str:
@@ -713,6 +803,56 @@ class GameObject:
         """
         obj = self._live()
         current_scene().remove(obj.name)
+
+    @property
+    def layer(self) -> int:
+        """Which collision layer this object is on. ``1`` by default.
+
+        A layer is a number from 1 to 32, and it says what an object *is* --
+        a player, an enemy, a wall. What it will collide *with* is
+        :attr:`mask`::
+
+            player.layer = 1
+            zombie.layer = 2
+
+        Setting a layer on its own changes nothing about what collides,
+        because every object starts willing to collide with every layer.
+        Filtering starts when a mask is narrowed.
+        """
+        return _layers_of(self._live()._layer)[0]
+
+    @layer.setter
+    def layer(self, value: int) -> None:
+        self._live()._layer = _check_layer(value)
+
+    @property
+    def mask(self) -> tuple[int, ...]:
+        """Which layers this object will collide with. Every layer by default.
+
+        Give it one layer or several::
+
+            player.mask = 2            # only ever touches layer 2
+            bullet.mask = (2, 3)       # touches layers 2 and 3
+
+        Reads back as a tuple of layer numbers, smallest first, so asking is
+        plain Python::
+
+            if 2 in player.mask:
+                ...
+
+        **Both objects have to agree.** Two objects collide only when each
+        one's mask contains the other's layer -- see
+        :func:`trjoludus.objects.collide`. A mask is permission, and
+        permission that only one side gave is not agreement.
+
+        An empty mask means this object collides with nothing, which is a
+        useful thing to be able to say and not an error.
+        """
+        return _layers_of(self._live()._mask)
+
+    @mask.setter
+    def mask(self, value) -> None:
+        self._live()._mask = _check_mask(value)
 
     def group(self, name: str) -> "GameObject":
         """Put this object in a collision group.
