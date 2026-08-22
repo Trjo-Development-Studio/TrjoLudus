@@ -12,6 +12,12 @@ objects :mod:`trjoludus.create` makes. Draw a menu once when the game starts
 rather than again on every update -- drawing in ``on_update`` would add another
 copy each frame. :func:`clear` throws away what has been drawn.
 
+**This is the interface, not the world.** ``draw`` is for scores, menus,
+titles and buttons: shapes and text, on top of everything, that can be
+clicked and hidden. ``create`` is for the things a game is *about* -- they
+have an image, they collide and they animate. Both are kept and redrawn until
+something removes them; what differs is what the thing is.
+
 For a whole screen that gets switched on and off, give it a name::
 
     start_menu = draw.list("start_menu")

@@ -49,7 +49,7 @@ class MouseTest(Game):
             self.quit()
 
     def on_update(self, dt):
-        mouse.wait(input.mouse)
+        mouse.wait()
 
         if mouse.button == "RIGHT":
             self.quit()

@@ -243,7 +243,14 @@ class TestWaitOutsideAGame(unittest.TestCase):
     def test_a_bad_argument_is_rejected(self):
         with self.assertRaises(TrjoLudusError) as caught:
             mouse.wait("LEFT")
-        self.assertIn("input.mouse", str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("mouse.wait()", message)
+        self.assertIn("returns the button", message)
+
+    def test_the_old_sentinel_argument_is_still_accepted(self):
+        with self.assertRaises(TrjoLudusError) as caught:
+            mouse.wait(input.mouse)
+        self.assertIn("running", str(caught.exception))
 
     def test_the_keyboard_slot_is_not_accepted(self):
         with self.assertRaises(TrjoLudusError):

@@ -604,3 +604,316 @@ class TestOutsideAGame(KeyboardStateTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestJustPressed(KeyboardStateTestCase):
+    """The edge: true for the one frame a key goes down, and no other.
+
+    This is the question behind jumping, firing and confirming a menu --
+    things that should happen once per press however long the key is held.
+    """
+
+    def test_nothing_has_just_been_pressed_to_begin_with(self):
+        answers = self.watch({}, lambda: keyboard.just_pressed("W"), frames=3)
+        self.assertEqual(answers, [False, False, False])
+
+    def test_it_is_true_for_exactly_one_frame(self):
+        answers = self.watch({1: [KeyPressed("W")]},
+                             lambda: keyboard.just_pressed("W"), frames=5)
+        self.assertEqual(answers, [False, True, False, False, False],
+                         "a held key kept looking newly pressed")
+
+    def test_holding_does_not_press_it_again(self):
+        """The key stays down for the rest of the run and never re-fires."""
+        answers = self.watch({1: [KeyPressed("W")]},
+                             lambda: keyboard.just_pressed("W"), frames=8)
+        self.assertEqual(answers.count(True), 1)
+
+    def test_pressed_stays_true_while_just_pressed_does_not(self):
+        held = self.watch({1: [KeyPressed("W")]},
+                          lambda: keyboard.pressed("W"), frames=5)
+        edge = self.watch({1: [KeyPressed("W")]},
+                          lambda: keyboard.just_pressed("W"), frames=5)
+        self.assertEqual(held, [False, True, True, True, True])
+        self.assertEqual(edge, [False, True, False, False, False])
+
+    def test_releasing_and_pressing_again_fires_again(self):
+        answers = self.watch(
+            {1: [KeyPressed("W")], 3: [KeyReleased("W")],
+             5: [KeyPressed("W")]},
+            lambda: keyboard.just_pressed("W"), frames=8)
+        self.assertEqual(answers.count(True), 2, f"{answers}")
+        # Scripted on frame 1 and 5; delivered at the top of 2 and 6.
+        self.assertEqual(answers, [False, True, False, False,
+                                   False, True, False, False])
+
+    def test_a_repeated_press_of_a_held_key_does_not_fire(self):
+        """A server that ignores detectable auto-repeat must not make a held
+        key look newly pressed every frame."""
+        answers = self.watch(
+            {1: [KeyPressed("W")], 2: [KeyPressed("W")],
+             3: [KeyPressed("W")]},
+            lambda: keyboard.just_pressed("W"), frames=6)
+        self.assertEqual(answers.count(True), 1, f"{answers}")
+
+    def test_a_press_and_release_in_the_same_batch_still_fires(self):
+        answers = self.watch({1: [KeyPressed("W"), KeyReleased("W")]},
+                             lambda: keyboard.just_pressed("W"), frames=4)
+        self.assertEqual(answers, [False, True, False, False])
+
+    def test_several_keys_are_independent(self):
+        both = self.watch(
+            {1: [KeyPressed("W")], 3: [KeyPressed("D")]},
+            lambda: (keyboard.just_pressed("W"), keyboard.just_pressed("D")),
+            frames=6)
+        self.assertEqual(both, [(False, False), (True, False), (False, False),
+                                (False, True), (False, False), (False, False)])
+
+    def test_two_keys_in_one_frame_both_fire(self):
+        both = self.watch(
+            {1: [KeyPressed("W"), KeyPressed("D")]},
+            lambda: (keyboard.just_pressed("W"), keyboard.just_pressed("D")),
+            frames=3)
+        self.assertEqual(both[1], (True, True))
+
+    def test_asking_does_not_consume_it(self):
+        answers = self.watch(
+            {1: [KeyPressed("W")]},
+            lambda: [keyboard.just_pressed("W") for _ in range(3)], frames=3)
+        self.assertEqual(answers[1], [True, True, True],
+                         "asking twice gave different answers")
+
+    def test_it_does_not_take_a_press_away_from_wait(self):
+        backend = NullBackend()
+        seen = []
+
+        class G(Game):
+            count = 0
+
+            def on_update(self, dt):
+                self.count += 1
+                if self.count == 1:
+                    backend.windows[0].simulate_event(KeyPressed("W"))
+                    return
+                seen.append(keyboard.just_pressed("W"))
+                seen.append(keyboard.wait())
+                self.quit()
+
+        Application(G(), size=(40, 30), max_fps=None, backend=backend).run()
+        self.assertEqual(seen, [True, "W"],
+                         "the edge query swallowed the press")
+
+    def test_it_works_without_a_game_running(self):
+        self.assertFalse(keyboard.just_pressed("W"))
+
+    def test_an_unknown_key_is_refused_like_pressed(self):
+        with self.assertRaises(ValueError):
+            keyboard.just_pressed("w")
+        with self.assertRaises(ValueError):
+            keyboard.just_pressed("NOPE")
+        with self.assertRaises(TypeError):
+            keyboard.just_pressed(7)
+
+    def test_a_window_going_away_clears_it(self):
+        state = KeyboardState()
+        state.key_down("W")
+        self.assertTrue(state.just_pressed("W"))
+        state.forget_everything()
+        self.assertFalse(state.just_pressed("W"))
+        self.assertFalse(state.pressed("W"))
+
+
+class TestTheFlatKeyboardShape(KeyboardStateTestCase):
+    """keyboard.pressed(...) beside mouse.pressed(...)."""
+
+    def test_pressed_is_on_the_module(self):
+        answers = self.watch({1: [KeyPressed("W")]},
+                             lambda: keyboard.pressed("W"), frames=3)
+        self.assertEqual(answers, [False, True, True])
+
+    def test_the_old_nested_spelling_still_works(self):
+        answers = self.watch({1: [KeyPressed("W")]},
+                             lambda: keyboard.button.pressed("W"), frames=3)
+        self.assertEqual(answers, [False, True, True])
+
+    def test_both_spellings_agree(self):
+        answers = self.watch(
+            {1: [KeyPressed("W")]},
+            lambda: (keyboard.pressed("W"), keyboard.button.pressed("W")),
+            frames=4)
+        for flat, nested in answers:
+            self.assertEqual(flat, nested)
+
+    def test_just_pressed_has_both_spellings_too(self):
+        answers = self.watch(
+            {1: [KeyPressed("W")]},
+            lambda: (keyboard.just_pressed("W"),
+                     keyboard.button.just_pressed("W")), frames=4)
+        for flat, nested in answers:
+            self.assertEqual(flat, nested)
+
+    def test_released_warns_that_it_is_going(self):
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            answer = keyboard.button.released("W")
+        self.assertTrue(answer, "it still does what it always did")
+        self.assertEqual(len(caught), 1)
+        self.assertIs(caught[0].category, DeprecationWarning)
+
+    def test_the_deprecation_says_what_to_write_instead(self):
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            keyboard.button.released("W")
+        message = str(caught[0].message)
+        self.assertIn("not keyboard.pressed", message)
+        self.assertIn("not held", message)
+
+    def test_released_is_not_on_the_flat_surface(self):
+        """The name is being kept free for a real release edge."""
+        self.assertFalse(hasattr(keyboard, "released"))
+
+    def test_the_flat_surface_is_what_it_should_be(self):
+        self.assertEqual(
+            sorted(n for n in keyboard.__all__),
+            ["KeyValue", "KeyboardState", "button", "just_pressed", "key",
+             "pressed", "wait"])
+
+
+class TestWaitReturnsWhatItTook(KeyboardStateTestCase):
+    def test_keyboard_wait_returns_the_key(self):
+        backend = NullBackend()
+        seen = []
+
+        class G(Game):
+            count = 0
+
+            def on_update(self, dt):
+                self.count += 1
+                if self.count == 1:
+                    backend.windows[0].simulate_event(KeyPressed("ESCAPE"))
+                    return
+                seen.append(keyboard.wait())
+                self.quit()
+
+        Application(G(), size=(40, 30), max_fps=None, backend=backend).run()
+        self.assertEqual(seen, ["ESCAPE"])
+        self.assertIsInstance(seen[0], str)
+
+    def test_the_global_mirror_still_agrees(self):
+        backend = NullBackend()
+        seen = []
+
+        class G(Game):
+            count = 0
+
+            def on_update(self, dt):
+                self.count += 1
+                if self.count == 1:
+                    backend.windows[0].simulate_event(KeyPressed("A"))
+                    return
+                returned = keyboard.wait()
+                seen.append((returned, str(key)))
+                self.quit()
+
+        Application(G(), size=(40, 30), max_fps=None, backend=backend).run()
+        self.assertEqual(seen, [("A", "A")])
+
+    def test_the_old_sentinel_form_still_works(self):
+        backend = NullBackend()
+        seen = []
+
+        class G(Game):
+            count = 0
+
+            def on_update(self, dt):
+                self.count += 1
+                if self.count == 1:
+                    backend.windows[0].simulate_event(KeyPressed("B"))
+                    return
+                seen.append(keyboard.wait(input_module.key))
+                self.quit()
+
+        Application(G(), size=(40, 30), max_fps=None, backend=backend).run()
+        self.assertEqual(seen, ["B"], "the old spelling should still return")
+
+    def test_presses_come_back_in_order(self):
+        backend = NullBackend()
+        seen = []
+
+        class G(Game):
+            count = 0
+
+            def on_update(self, dt):
+                self.count += 1
+                if self.count == 1:
+                    for name in ("W", "A", "D"):
+                        backend.windows[0].simulate_event(KeyPressed(name))
+                    return
+                seen.extend(keyboard.wait() for _ in range(3))
+                self.quit()
+
+        Application(G(), size=(40, 30), max_fps=None, backend=backend).run()
+        self.assertEqual(seen, ["W", "A", "D"])
+
+    def test_giving_up_returns_none(self):
+        backend = NullBackend()
+        seen = []
+
+        class G(Game):
+            def on_update(self, dt):
+                self.quit()
+                seen.append(keyboard.wait())
+
+        Application(G(), size=(40, 30), max_fps=None, backend=backend).run()
+        self.assertEqual(seen, [None])
+
+    def test_mouse_wait_returns_the_button(self):
+        backend = NullBackend()
+        seen = []
+
+        class G(Game):
+            count = 0
+
+            def on_update(self, dt):
+                self.count += 1
+                if self.count == 1:
+                    backend.windows[0].simulate_event(
+                        MouseButtonPressed("LEFT", 5, 5))
+                    return
+                seen.append(mouse.wait())
+                self.quit()
+
+        Application(G(), size=(40, 30), max_fps=None, backend=backend).run()
+        self.assertEqual(seen, ["LEFT"])
+
+    def test_mouse_wait_keeps_its_old_form_too(self):
+        backend = NullBackend()
+        seen = []
+
+        class G(Game):
+            count = 0
+
+            def on_update(self, dt):
+                self.count += 1
+                if self.count == 1:
+                    backend.windows[0].simulate_event(
+                        MouseButtonPressed("RIGHT", 1, 2))
+                    return
+                seen.append(mouse.wait(input_module.mouse))
+                self.quit()
+
+        Application(G(), size=(40, 30), max_fps=None, backend=backend).run()
+        self.assertEqual(seen, ["RIGHT"])
+
+    def test_a_wrong_argument_still_explains_itself(self):
+        from trjoludus.errors import TrjoLudusError
+
+        for call in (lambda: keyboard.wait("W"), lambda: mouse.wait("LEFT")):
+            with self.subTest():
+                with self.assertRaises(TrjoLudusError) as caught:
+                    call()
+                self.assertIn("returns the", str(caught.exception))

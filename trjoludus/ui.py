@@ -347,16 +347,29 @@ class Drawable:
     def x(self) -> int:
         """Distance in pixels from the left edge of the window.
 
-        Read-only. ``set.x()`` puts it somewhere exact and ``move.x()`` nudges
-        it, so every change goes through a check -- there is no way to write a
-        float or a bool straight into a position.
+        Assignable, the same way a game object's is::
+
+            label.x = 40          # put it there
+            label.set.x(40)       # the same thing, when chaining reads better
+            label.move.x(10)      # and this nudges it
+
+        Every route goes through the same check, so a float or a bool cannot
+        be written straight into a position by any of them.
         """
         return self._x
 
+    @x.setter
+    def x(self, value) -> None:
+        self.set.x(value)
+
     @property
     def y(self) -> int:
-        """Distance in pixels from the top edge of the window."""
+        """Distance in pixels from the top edge of the window. Assignable."""
         return self._y
+
+    @y.setter
+    def y(self, value) -> None:
+        self.set.y(value)
 
     @property
     def end_x(self) -> int:
@@ -395,8 +408,17 @@ class Drawable:
 
     @property
     def scale(self) -> float:
-        """How much bigger than normal this drawing is. 1.0 is normal."""
+        """How much bigger than normal this drawing is. 1.0 is normal.
+
+        Assignable, as a game object's is::
+
+            title.scale = 3.0
+        """
         return self._scale
+
+    @scale.setter
+    def scale(self, value) -> None:
+        self.set.scale(value)
 
     @property
     def position(self) -> tuple[int, int]:
@@ -405,8 +427,21 @@ class Drawable:
 
     @property
     def visible(self) -> bool:
-        """Whether this drawing is shown, ignoring its list."""
+        """Whether this drawing is shown, ignoring its list.
+
+        Assignable, as a game object's is::
+
+            label.visible = False
+            label.hide()             # the same thing, said as an action
+
+        :attr:`showing` is the other question -- whether it *actually*
+        appears, which also depends on its list.
+        """
         return self._visible
+
+    @visible.setter
+    def visible(self, value) -> None:
+        self.show() if value else self.hide()
 
     @property
     def showing(self) -> bool:

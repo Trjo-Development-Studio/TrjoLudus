@@ -59,7 +59,7 @@ class UiTest(Game):
             self.quit()
 
     def on_update(self, dt):
-        keyboard.wait(input.key)
+        keyboard.wait()
 
         if key == "SPACE":
             self.paused = not self.paused

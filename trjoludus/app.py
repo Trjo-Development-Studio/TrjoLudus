@@ -297,9 +297,12 @@ class Application:
         """Run frames until the game asks to stop."""
         game = self._game
         while not game.quit_requested and self._backend.keeps_application_alive:
-            # A click belongs to the frame it arrived in, so what UI can ask
-            # about starts empty each time round.
+            # A click and a key press belong to the frame they arrived in, so
+            # what a game can ask about starts empty each time round. This is
+            # what makes keyboard.just_pressed() mean "this frame".
             self._frame_clicks.clear()
+            for keys in self._key_states.values():
+                keys.begin_frame()
             # The whole batch is delivered even if a handler calls quit():
             # these events already happened, and dropping some of them would
             # make delivery depend on where in the batch quit() landed.

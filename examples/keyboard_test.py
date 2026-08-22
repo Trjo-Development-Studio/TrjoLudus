@@ -7,8 +7,9 @@ Run it from anywhere:
 Press W, A, S or D to move the player, and Escape to quit.
 
 ``keyboard.wait`` does exactly what it says: nothing else happens until a key
-is pressed. That is why the player only moves on a key press rather than
-gliding -- continuous movement needs a different shape, which is later work.
+is pressed, and it hands back the key it took. That is why the player steps
+rather than glides. For continuous movement, ask ``keyboard.pressed`` inside
+an ordinary update instead -- ``keyboard_state_test.py`` does that.
 """
 
 import sys
@@ -22,8 +23,6 @@ from trjoludus import (  # noqa: E402
     GameObject,
     WindowCloseRequested,
     create,
-    input,
-    key,
     keyboard,
     run,
 )
@@ -34,8 +33,7 @@ STEP = 20
 
 class KeyboardTest(Game):
     def on_start(self):
-        create.image(200, 130, SPRITE, "player")
-        self.player = GameObject("player")
+        self.player = create.image(200, 130, SPRITE, "player")
         print("Press W A S D to move, Escape to quit.")
 
     def on_event(self, event):
@@ -43,17 +41,17 @@ class KeyboardTest(Game):
             self.quit()
 
     def on_update(self, dt):
-        keyboard.wait(input.key)
+        pressed_key = keyboard.wait()
 
-        if key == "W":
+        if pressed_key == "W":
             self.player.move.y(-STEP)
-        if key == "S":
+        if pressed_key == "S":
             self.player.move.y(STEP)
-        if key == "A":
+        if pressed_key == "A":
             self.player.move.x(-STEP)
-        if key == "D":
+        if pressed_key == "D":
             self.player.move.x(STEP)
-        if key == "ESCAPE":
+        if pressed_key == "ESCAPE":
             self.quit()
 
     def on_stop(self):

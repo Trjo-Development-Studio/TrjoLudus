@@ -130,10 +130,20 @@ class TestWaitOutsideAGame(unittest.TestCase):
         with self.assertRaises(TrjoLudusError):
             tl.keyboard.wait("W")
 
-    def test_the_error_names_the_right_argument(self):
+    def test_the_error_teaches_the_form_that_works(self):
         with self.assertRaises(TrjoLudusError) as caught:
             tl.keyboard.wait("W")
-        self.assertIn("input.key", str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("keyboard.wait()", message)
+        self.assertIn("returns the key", message)
+
+    def test_the_old_sentinel_argument_is_still_accepted(self):
+        """keyboard.wait(input.key) was how this used to be written."""
+        with self.assertRaises(TrjoLudusError) as caught:
+            tl.keyboard.wait(tl.input.key)
+        self.assertIn("running", str(caught.exception),
+                      "the sentinel should reach the no-game check, not be "
+                      "refused as a bad argument")
 
 
 class TestWaitReturnsKeys(unittest.TestCase):

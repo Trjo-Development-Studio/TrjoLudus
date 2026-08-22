@@ -259,8 +259,8 @@ def collide(name_a: str, name_b: str = _NOT_GIVEN, *,
     a group collide with that group for ever.
 
     Args:
-        name_a: The name of the object to ask about.
-        name_b: The name of another object to ask about. Give this or
+        name_a: The object to ask about -- its name, or the handle itself.
+        name_b: Another object to ask about, by name or handle. Give this or
             ``group``, not both.
         group: A group to ask about instead of a second object.
 
@@ -275,11 +275,9 @@ def collide(name_a: str, name_b: str = _NOT_GIVEN, *,
         ValueError: If neither or both of ``name_b`` and ``group`` are given,
             or if a group name is blank.
     """
-    if not isinstance(name_a, str):
-        raise TypeError(
-            f"a game object name must be a string, got "
-            f"{type(name_a).__name__}"
-        )
+    from trjoludus.scene import name_of
+
+    name_a = name_of(name_a)
     given = name_b is not _NOT_GIVEN
     if given == (group is not None):
         raise ValueError(
@@ -298,11 +296,7 @@ def collide(name_a: str, name_b: str = _NOT_GIVEN, *,
         # is one, not how many.
         return any(True for _ in _overlapping(subject, checked))
 
-    if not isinstance(name_b, str):
-        raise TypeError(
-            f"a game object name must be a string, got "
-            f"{type(name_b).__name__}"
-        )
+    name_b = name_of(name_b)
 
     # Asked before anything is looked up, because it is wrong whether or not
     # the object exists. Every object is in the scene under one name, so two
@@ -444,7 +438,9 @@ def colliding(name: str, *, group: str = None) -> tuple:
     group that was asked for.
 
     Args:
-        name: The name of the object to ask about.
+        name: The object to ask about -- its name, or the handle itself, so
+            that what :func:`colliding` hands back can be passed straight
+            back in.
         group: Only return members of this group.
 
     Returns:
@@ -455,12 +451,9 @@ def colliding(name: str, *, group: str = None) -> tuple:
         TypeError: If ``name`` or ``group`` is not a string.
         ValueError: If ``group`` is blank.
     """
-    from trjoludus.scene import GameObject
+    from trjoludus.scene import GameObject, name_of
 
-    if not isinstance(name, str):
-        raise TypeError(
-            f"a game object name must be a string, got {type(name).__name__}"
-        )
+    name = name_of(name)
     checked = None if group is None else _check_group_asked_for(group)
 
     subject = _find(name)

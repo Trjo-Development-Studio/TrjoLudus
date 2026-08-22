@@ -271,13 +271,40 @@ class TestDrawingPosition(PositionTestCase):
         self.assertEqual((line.end_x, line.end_y), (110, 54),
                          "the line must keep its shape")
 
-    def test_position_is_read_only_so_every_change_is_checked(self):
+    def test_the_values_a_drawing_does_not_own_stay_read_only(self):
+        """Size, text, colour and kind are still set through `set`."""
         box = self.box()
-        for attribute in ("x", "y", "width", "height", "message", "colour",
-                          "kind"):
+        for attribute in ("width", "height", "message", "colour", "kind"):
             with self.subTest(attribute=attribute):
                 with self.assertRaises(AttributeError):
                     setattr(box, attribute, 5)
+
+    def test_assigning_a_position_is_checked_like_every_other_route(self):
+        """x and y are assignable now, as a game object's are -- but every
+        route still goes through the same check, so nothing can be written
+        straight into a position."""
+        box = self.box()
+        for attribute in ("x", "y"):
+            for bad in ("five", None, True, [1]):
+                with self.subTest(attribute=attribute, value=bad):
+                    with self.assertRaises(TypeError):
+                        setattr(box, attribute, bad)
+            with self.subTest(attribute=attribute, value="infinity"):
+                with self.assertRaises(ValueError):
+                    setattr(box, attribute, float("inf"))
+
+    def test_assigning_a_position_does_what_set_does(self):
+        box = self.box()
+        box.x = 40
+        box.y = 25
+        self.assertEqual((box.x, box.y), (40, 25))
+        self.assertEqual(box.position, (40, 25))
+
+    def test_a_gone_drawing_refuses_to_be_assigned_to(self):
+        box = self.box()
+        current_ui().clear()
+        with self.assertRaises(UiError):
+            box.x = 10
 
     def test_a_gone_drawing_refuses_to_be_placed(self):
         box = self.box()

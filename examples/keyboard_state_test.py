@@ -8,9 +8,9 @@ Hold W, A, S or D to move the block around; it walks while it is moving and
 goes still when you let go. Hold two directions at once and it moves
 diagonally. Press ESCAPE to quit.
 
-This is the pattern `keyboard.button.pressed()` exists for:
+This is the pattern `keyboard.pressed()` exists for:
 
-    if keyboard.button.pressed("W"):
+    if keyboard.pressed("W"):
         player.animation.play("walk", fps=12)
         player.move.y(-100 * time.delta)
     else:
@@ -92,7 +92,7 @@ class KeyboardStateTest(Game):
             self.quit()
 
     def on_update(self, dt):
-        if keyboard.button.pressed("ESCAPE"):
+        if keyboard.pressed("ESCAPE"):
             self.quit()
             return
 
@@ -100,10 +100,10 @@ class KeyboardStateTest(Game):
 
         # Several keys at once: each is its own question, and both directions
         # can be true, which is what makes diagonal movement work.
-        left = keyboard.button.pressed("A")
-        right = keyboard.button.pressed("D")
-        up = keyboard.button.pressed("W")
-        down = keyboard.button.pressed("S")
+        left = keyboard.pressed("A")
+        right = keyboard.pressed("D")
+        up = keyboard.pressed("W")
+        down = keyboard.pressed("S")
 
         step = SPEED * time.delta
         if left:
@@ -128,7 +128,7 @@ class KeyboardStateTest(Game):
         player.set.y(max(24, min(HEIGHT - 40, player.y)))
 
         held = [name for name in ("W", "A", "S", "D")
-                if keyboard.button.pressed(name)]
+                if keyboard.pressed(name)]
         self.readout.set.text(
             f"held: {' '.join(held) or 'nothing'}    "
             f"at {player.x:.0f}, {player.y:.0f}")

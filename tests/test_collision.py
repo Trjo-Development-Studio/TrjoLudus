@@ -607,10 +607,11 @@ class TestBadArguments(CollisionTestCase):
 
 class TestTheApiSurface(CollisionTestCase):
     def test_objects_offers_only_the_collision_questions(self):
-        self.assertEqual(objects.__all__, ["collide", "colliding"])
+        self.assertEqual(objects.__all__,
+                         ["all", "collide", "colliding", "exists", "find"])
         self.assertEqual(
             sorted(n for n in dir(objects) if not n.startswith("_")),
-            ["collide", "colliding"])
+            ["all", "collide", "colliding", "exists", "find"])
 
     def test_it_is_reachable_the_way_a_game_writes_it(self):
         import trjoludus
@@ -1372,10 +1373,11 @@ class TestNothingIsRemembered(CollidingTestCase):
 
 class TestTheApiSurfaceAfterPhaseTwo(CollidingTestCase):
     def test_objects_offers_exactly_the_two_questions(self):
-        self.assertEqual(objects.__all__, ["collide", "colliding"])
+        self.assertEqual(objects.__all__,
+                         ["all", "collide", "colliding", "exists", "find"])
         self.assertEqual(
             sorted(n for n in dir(objects) if not n.startswith("_")),
-            ["collide", "colliding"])
+            ["all", "collide", "colliding", "exists", "find"])
 
     def test_no_internals_leaked_into_the_namespace(self):
         for hidden in ("bounds", "overlap", "engine", "registry",
@@ -2277,10 +2279,11 @@ class TestWhereGroupStateLives(GroupTestCase):
 
 class TestTheApiSurfaceAfterPhaseThree(GroupTestCase):
     def test_objects_still_offers_exactly_two_questions(self):
-        self.assertEqual(objects.__all__, ["collide", "colliding"])
+        self.assertEqual(objects.__all__,
+                         ["all", "collide", "colliding", "exists", "find"])
         self.assertEqual(
             sorted(n for n in dir(objects) if not n.startswith("_")),
-            ["collide", "colliding"])
+            ["all", "collide", "colliding", "exists", "find"])
 
     def test_no_group_machinery_leaked_into_the_namespace(self):
         for hidden in ("group", "ungroup", "groups", "_check_group",
@@ -3029,10 +3032,11 @@ class TestLayerQueriesOnlyAnswer(LayerTestCase):
 
 class TestTheApiSurfaceAfterPhaseFour(LayerTestCase):
     def test_objects_still_offers_exactly_two_questions(self):
-        self.assertEqual(objects.__all__, ["collide", "colliding"])
+        self.assertEqual(objects.__all__,
+                         ["all", "collide", "colliding", "exists", "find"])
         self.assertEqual(
             sorted(n for n in dir(objects) if not n.startswith("_")),
-            ["collide", "colliding"])
+            ["all", "collide", "colliding", "exists", "find"])
 
     def test_the_layer_api_is_on_the_game_object(self):
         for name in ("layer", "mask"):

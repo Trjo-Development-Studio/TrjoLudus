@@ -207,11 +207,17 @@ def pressed(name: str) -> bool:
     return active_state().pressed(_check_button(name))
 
 
-def wait(what) -> None:
-    """Wait for a mouse button press and record which one it was.
+def wait(what=None) -> "str | None":
+    """Wait for a mouse button press and return which one it was.
 
-    Like :func:`trjoludus.keyboard.wait`, this hands you nothing to store: it
-    updates :data:`button`. Each press answers exactly one call, in the order
+    ::
+
+        clicked = mouse.wait()
+
+        if clicked == "LEFT":
+            print("clicked at", mouse.x, mouse.y)
+
+    Each press answers exactly one call, in the order
     the presses happened, so calling twice waits twice rather than reporting
     the same click again.
 
@@ -221,23 +227,24 @@ def wait(what) -> None:
     click happened, not wherever the pointer has since drifted to.
 
     Args:
-        what: :data:`trjoludus.input.mouse`. Nothing else is accepted yet.
+        what: Nothing. Accepted so that ``mouse.wait(input.mouse)``, the way
+            this used to be written, keeps working.
 
     Returns:
-        Nothing. The result goes into :data:`button`.
+        The button name -- ``"LEFT"``, ``"RIGHT"`` or ``"MIDDLE"``. ``None`` if
+        the game asked to stop while waiting, or its last window disappeared.
 
-    If the game asks to stop while waiting, or its last window disappears, the
-    wait ends and :data:`button` becomes ``None`` rather than keeping the
-    previous click.
+        :data:`button` is updated too, as a mirror for games written before
+        this returned anything.
 
     Raises:
         TrjoLudusError: If called while no game is running, or if ``what`` is
-            not :data:`trjoludus.input.mouse`.
+            something other than :data:`trjoludus.input.mouse`.
     """
-    if what is not any_input:
+    if what is not None and what is not any_input:
         raise TrjoLudusError(
-            f"mouse.wait() takes input.mouse, not {what!r}. It is the only "
-            f"kind of mouse input TrjoLudus can wait for so far."
+            f"mouse.wait() takes no arguments, and got {what!r}. Write "
+            f"'clicked = mouse.wait()' -- it returns the button."
         )
 
     from trjoludus.app import current_application
@@ -248,4 +255,5 @@ def wait(what) -> None:
             "mouse.wait() only works while a game is running. Call it from "
             "on_start or on_update, inside a game started with tl.run()."
         )
-    application.wait_for_input(kind="mouse")
+    taken = application.wait_for_input(kind="mouse")
+    return None if taken is None else taken.value

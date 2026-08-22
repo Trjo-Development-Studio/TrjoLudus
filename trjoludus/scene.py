@@ -253,6 +253,31 @@ def _layers_of(mask: int) -> tuple:
                  if mask & (1 << (number - 1)))
 
 
+def name_of(who, what: str = "a game object") -> str:
+    """The name of an object, given either its name or a handle on it.
+
+    Engine-internal, and the one place this is decided. Anything public that
+    takes an object by name takes a :class:`GameObject` too, because the
+    library hands those out -- ``create.image(...)`` returns one and
+    ``objects.colliding(...)`` returns several -- and a result that cannot be
+    passed back into the thing that produced it is a result with a chore
+    attached.
+
+    A handle is asked for its name rather than followed to its object, so
+    everything downstream works on names exactly as it always has.
+
+    Raises:
+        TypeError: If it is neither a string nor a handle.
+    """
+    if isinstance(who, str):
+        return who
+    if isinstance(who, GameObject):
+        return who.name
+    raise TypeError(
+        f"{what} must be a name or a game object, got {type(who).__name__}"
+    )
+
+
 def _check_group(name: str) -> str:
     """A usable group name, or a clear complaint.
 
@@ -613,9 +638,28 @@ class AnimationControl:
         """Carry on from where :meth:`pause` stopped."""
         self._animator().resume(name)
 
-    def stop(self, name: str) -> None:
-        """Stop an animation, keeping the frame it reached."""
-        self._animator().stop(name)
+    def stop(self, name: str = None) -> None:
+        """Stop an animation, keeping the frame it reached.
+
+        ::
+
+            zombie.animation.stop()          # whatever is playing
+            zombie.animation.stop("walk")    # that one, if it is playing
+
+        Only one animation plays at a time, so naming it is optional -- the
+        object already knows which one it is on. Naming it is still useful
+        when a game wants to stop something *only* if it is the thing running,
+        and hear about it when it is not.
+
+        Stopping when nothing is playing does nothing and says nothing: it is
+        the state the game asked for.
+        """
+        animator = self._animator()
+        if name is None:
+            if animator.current is None or not animator.is_playing:
+                return
+            name = animator.current
+        animator.stop(name)
 
     def frames(self, name: str) -> int:
         """How many frames an animation has."""
@@ -916,6 +960,38 @@ class GameObject:
         return tuple(self._live()._groups)
 
     @property
+    def alive(self) -> bool:
+        """Whether this object is still in the game.
+
+        ``False`` once :meth:`destroy` has been called, on every handle to it
+        and not only the one that did it::
+
+            if player.alive:
+                player.move.x(5)
+
+        Asking is always safe -- it is the one thing a handle answers after
+        its object is gone, which is what makes it worth asking.
+
+        A destroyed object stays destroyed. Creating something else with the
+        same name, or one that happens to be given the same storage, does not
+        bring it back: this asks about *this* object, not about the name.
+        """
+        return not self._object.removed
+
+    def __bool__(self) -> bool:
+        """Whether this object is still in the game. Same as :attr:`alive`.
+
+        So that the plain Python spelling tells the truth::
+
+            if player:
+                player.move.x(5)
+
+        A handle that answered ``True`` after its object was destroyed would
+        promise something the very next line would refuse.
+        """
+        return self.alive
+
+    @property
     def name(self) -> str:
         """The name this object was created with."""
         return self._object.name
@@ -955,8 +1031,22 @@ class GameObject:
 
     @property
     def scale(self) -> float:
-        """How much bigger than its image this is drawn. 1.0 is normal."""
+        """How much bigger than its image this is drawn. 1.0 is normal.
+
+        Set it outright, or change it by a relative amount::
+
+            player.scale = 2.0        # twice the size of its image
+            player.add.scale(0.5)     # and then half again as big
+
+        Raises:
+            TypeError: If the value is not a number.
+            ValueError: If it is zero or negative.
+        """
         return self._live().scale
+
+    @scale.setter
+    def scale(self, value) -> None:
+        self._live().scale = _check_scale(value)
 
     @property
     def size(self) -> tuple[int, int]:

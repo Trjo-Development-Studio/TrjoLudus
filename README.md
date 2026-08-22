@@ -274,58 +274,70 @@ Text uses a small built-in font, so it needs no font files: printable ASCII at
 
 ### Keyboard input
 
-There are two different questions, and it is worth knowing which you are
-asking. **Is a key held down right now?**
+There are three different questions, and it is worth knowing which one you are
+asking.
+
+**Is a key held down right now?** For anything continuous -- walking,
+steering, holding a button:
 
 ```python
 from trjoludus import keyboard, time
 
-if keyboard.button.pressed("W"):
+if keyboard.pressed("W"):
     player.animation.play("walk", fps=12)
     player.move.y(-100 * time.delta)
-else:
-    player.set.image("idle.png")
 ```
 
 `pressed()` is **held state**. It is true from the moment the key goes down
-until it comes back up, on every frame in between -- not "was it pressed this
-frame". Reading it consumes nothing, so ask about as many keys as you like, as
-often as you like:
+until it comes back up, on every frame in between. Reading it consumes
+nothing, so ask about as many keys as you like, as often as you like:
 
 ```python
-if keyboard.button.pressed("W"):
+if keyboard.pressed("W"):
     player.move.y(-100 * time.delta)
-if keyboard.button.pressed("D"):
+if keyboard.pressed("D"):
     player.move.x(100 * time.delta)
 ```
 
 Both can be true at once, and letting go of one does not affect the other.
-`keyboard.button.released("W")` is the exact opposite -- also state, so it is
-true for a key nobody has touched, not only for one just let go of.
 
-**Or: wait until a key arrives.**
+**Did a key go down this frame?** For anything that should happen *once* per
+press -- jumping, firing, confirming a menu:
 
 ```python
-from trjoludus import input, key, keyboard
+if keyboard.just_pressed("SPACE"):
+    player.jump()
+```
 
-keyboard.wait(input.key)
+`just_pressed()` is true for the single frame the key went from up to down,
+and false on every frame after that however long it is held. That is the
+difference: hold SPACE and `pressed` stays true while `just_pressed` fires
+once.
 
-print(key)          # W
+**Or: stop until a key arrives.** For a title screen, or a game with nothing
+to do until someone presses something:
 
-if key == "W":
+```python
+from trjoludus import keyboard
+
+pressed_key = keyboard.wait()
+
+print(pressed_key)          # W
+
+if pressed_key == "W":
     player.move.y(-50)
-if key == "S":
+if pressed_key == "S":
     player.move.y(50)
 ```
 
-`wait` does not give you a value to store: it waits for a key press and updates
-`key`. Each press answers exactly one `wait`, so calling it twice waits twice --
-it never repeats the last key. Nothing else happens while waiting; no frame is
-drawn until a key arrives.
+`wait` returns the key. Each press answers exactly one `wait`, so calling it
+twice waits twice -- it never repeats the last key. Nothing else happens while
+waiting; no frame is drawn until a key arrives. It gives back `None` if the
+game quits while it is waiting.
 
-`wait` is **blocking event input**; `pressed()` is **held state**. They do not
-interfere: a press read by `wait` still counts as held, and asking what is held
-never takes a press away from a wait.
+`wait` is **blocking**; `pressed()` and `just_pressed()` are **state**, read
+inside your normal update. They do not interfere: a press read by `wait` still
+counts as held, and asking what is held never takes a press away from a wait.
 
 Key names are uppercase and the same on every platform, and the same names work
 for both: `"W"` … `"Z"`, `"0"` … `"9"`, `"ESCAPE"`, `"ENTER"`, `"SPACE"`,
@@ -352,15 +364,20 @@ from trjoludus import input, mouse
 if mouse.pressed("LEFT"):
     print(mouse.x, mouse.y)
 
-mouse.wait(input.mouse)
+clicked = mouse.wait()
 print(mouse.button)     # LEFT
 ```
 
 Where the pointer is and whether a button is held are **state**: read
 `mouse.x`, `mouse.y`, `mouse.position` or `mouse.pressed("LEFT")` whenever you
 like and you get the current answer. A button going down is an **input**:
-`mouse.wait(input.mouse)` hands each press out exactly once, in order, exactly
+`mouse.wait()` returns the button, and hands each press out exactly once, in order, exactly
 as `keyboard.wait` does with keys.
+
+```python
+clicked = mouse.wait()      # "LEFT", "RIGHT", "MIDDLE" -- or None if the
+                            # game quit while waiting
+```
 
 Moving the mouse does not end a wait -- only a button does. Afterwards
 `mouse.x` and `mouse.y` report where that click happened. The buttons are
@@ -382,7 +399,7 @@ change until the next one is read, so it still says `"LEFT"` long after the
 left button came back up, and it is `None` until something has been read.
 
 ```python
-mouse.wait(input.mouse)     # the player clicks and releases
+mouse.wait()                # the player clicks and releases
 
 mouse.button                # "LEFT"  -- what was read
 mouse.pressed("LEFT")       # False   -- it is not held any more
@@ -439,6 +456,10 @@ disappears, so a wait can never outlive the game it is in.
 
 ### Waiting for either
 
+Most games do not need this: `keyboard.wait()` and `mouse.wait()` each return
+what they took. `input` is for the one case they cannot cover -- taking
+whichever kind arrives first.
+
 ```python
 from trjoludus import input, key, mouse
 
@@ -449,6 +470,9 @@ if input.type == input.key:
 elif input.type == input.mouse:
     print(mouse.button)
 ```
+
+> `input` is the older shape, kept working and kept for this. Reach for
+> `keyboard` and `mouse` first; they read better and they hand you the value.
 
 The three waits share one queue in arrival order. `keyboard.wait` answers only
 to keys and `mouse.wait` only to the mouse -- and the kind you did not ask for
@@ -665,9 +689,13 @@ old_wall.destroy()                 # gone; collides with nothing
 and tells you everything it is touching:
 
 ```python
-for enemy in objects.colliding("player"):
+for enemy in objects.colliding(player):
     print(enemy)
 ```
+
+An object can be given by name or by the handle itself -- `objects.colliding(player)`
+and `objects.colliding("player")` are the same question -- so what comes back
+from one call goes straight into the next.
 
 ```text
 GameObject('zombie')
@@ -823,6 +851,38 @@ to say:
 
 ```python
 ghost.mask = ()
+```
+
+#### Finding objects
+
+`create.image(...)` hands you the object it made, and most games keep it. When
+you need one you did not keep:
+
+```python
+from trjoludus import objects
+
+player = objects.find("player")     # the handle, or None
+
+if player and player.alive:
+    player.move.x(5)
+
+for thing in objects.all():         # everything, oldest first
+    print(thing.name, thing.position)
+```
+
+`objects.find` answers `None` for a name that is not there, which is what you
+want when its absence is a question. `GameObject("player")` raises instead,
+which is what you want when its absence is a bug. `objects.exists("boss")`
+answers the same question as a plain `True`/`False`.
+
+An object knows whether it is still in the game:
+
+```python
+zombie.destroy()
+
+zombie.alive        # False
+if zombie:          # also False -- the plain Python spelling agrees
+    ...
 ```
 
 #### You do not have to use them

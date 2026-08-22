@@ -1,15 +1,22 @@
-"""Waiting for keyboard input.
+"""Reading the keyboard.
 
-::
+Three questions, and they are different questions::
 
-    tl.keyboard.wait(tl.input.key)
+    if keyboard.pressed("D"):          # held right now
+        player.move.x(200 * time.delta)
 
-    if tl.key == "W":
-        player.move.y(-50)
+    if keyboard.just_pressed("SPACE"): # went down this frame
+        player.jump()
 
-:func:`wait` does not hand you a value to store. It waits for a key and
-updates :data:`key`, so a game reads the key where it needs it instead of
-threading a variable through.
+    pressed_key = keyboard.wait()      # stop until something is pressed
+
+:func:`pressed` is for anything continuous -- walking, steering, holding a
+button down. :func:`just_pressed` is for anything that should happen once per
+press -- jumping, firing, confirming a menu. :func:`wait` is for a game that
+has nothing to do until a key arrives, such as a title screen.
+
+Nothing is consumed by asking the first two, and neither takes a press away
+from :func:`wait`.
 
 **Only the keyboard ends this wait.** A mouse click does not, and is not
 thrown away either -- it stays queued for :func:`trjoludus.mouse.wait` or
@@ -38,10 +45,10 @@ returns.
 
 ::
 
-    if keyboard.button.pressed("W"):
+    if keyboard.pressed("W"):
         player.move.y(-100 * time.delta)
 
-:meth:`KeyboardButtons.pressed` asks whether a key is down *right now*. It is
+:func:`pressed` asks whether a key is down *right now*. It is
 state, not input: it stays true for as long as the key is held, reading it
 does not use anything up, and it can be asked about as many keys as a game
 likes, as often as it likes. :func:`wait` is the other thing -- it blocks
@@ -51,10 +58,13 @@ The two do not interfere. A press read by :func:`wait` still marks the key as
 held, and asking whether a key is held never takes a press away from a wait.
 """
 
+import warnings
+
 from trjoludus.errors import TrjoLudusError
 from trjoludus.events import KEY_NAMES
 
-__all__ = ["KeyboardState", "KeyValue", "button", "key", "wait"]
+__all__ = ["KeyboardState", "KeyValue", "button", "just_pressed", "key",
+           "pressed", "wait"]
 
 
 def _check_key(name: str) -> str:
@@ -93,33 +103,55 @@ class KeyboardState:
     input system changing shape.
     """
 
-    __slots__ = ("held",)
+    __slots__ = ("held", "went_down")
 
     def __init__(self) -> None:
         #: The keys currently down. A set, so several keys held at once is
         #: the ordinary case rather than something special.
         self.held: set[str] = set()
+        #: The keys that went down since the frame began, which is what
+        #: :func:`just_pressed` answers from. Emptied at the top of each
+        #: frame, exactly as the frame's clicks are -- a press belongs to the
+        #: frame it arrived in.
+        self.went_down: set[str] = set()
 
     def pressed(self, name: str) -> bool:
         """Whether one key is held down in this window."""
         return name in self.held
 
+    def just_pressed(self, name: str) -> bool:
+        """Whether one key went down during this frame, in this window."""
+        return name in self.went_down
+
     def key_down(self, name: str) -> None:
-        """Engine-internal: record a key going down."""
+        """Engine-internal: record a key going down.
+
+        A key already held is not going down again. Auto-repeat is asked not
+        to send those, but a server that ignores that would otherwise make a
+        held key look newly pressed on every frame -- which is the one thing
+        :meth:`just_pressed` exists not to do.
+        """
+        if name not in self.held:
+            self.went_down.add(name)
         self.held.add(name)
 
     def key_up(self, name: str) -> None:
         """Engine-internal: record a key coming up."""
         self.held.discard(name)
 
+    def begin_frame(self) -> None:
+        """Engine-internal: nothing has newly gone down yet this frame."""
+        self.went_down.clear()
+
     def forget_everything(self) -> None:
-        """Engine-internal: nothing can still be held.
+        """Engine-internal: nothing can still be held, or newly held.
 
         Used when a window goes away. A key held as the window disappeared
         would otherwise stay held for good -- there is no release coming for
         a window that no longer exists.
         """
         self.held.clear()
+        self.went_down.clear()
 
     def __repr__(self) -> str:
         held = ", ".join(sorted(self.held)) or "nothing held"
@@ -144,57 +176,114 @@ def active_state() -> KeyboardState:
     return application.keyboard_state()
 
 
+def pressed(name: str) -> bool:
+    """Whether a key is held down right now.
+
+    ::
+
+        if keyboard.pressed("D"):
+            player.move.x(200 * time.delta)
+
+    True from the moment the key goes down until it comes back up, on every
+    frame in between. This is *not* "was it pressed this frame" --
+    :func:`just_pressed` is that. Holding D means ``pressed("D")`` is true the
+    whole time, which is what continuous movement is made of.
+
+    Nothing is consumed by asking, so two calls in the same frame give the
+    same answer and any number of keys can be asked about as often as a game
+    likes.
+
+    Args:
+        name: A key name, e.g. ``"W"`` or ``"ESCAPE"``. Uppercase.
+
+    Raises:
+        TypeError: If ``name`` is not a string.
+        ValueError: If it is not a key TrjoLudus knows.
+    """
+    return active_state().pressed(_check_key(name))
+
+
+def just_pressed(name: str) -> bool:
+    """Whether a key went down during this frame.
+
+    ::
+
+        if keyboard.just_pressed("SPACE"):
+            player.jump()
+
+    True for the one frame in which the key went from up to down, and false on
+    every frame after that however long it is held. This is the question
+    behind jumping, firing, confirming a menu and toggling something -- the
+    things that should happen once per press rather than continuously.
+
+    Its opposite number is :func:`pressed`, which stays true while the key is
+    down. Neither consumes anything, and neither takes a press away from
+    :func:`wait`.
+
+    A key held across a frame boundary does not go down again, so this stays
+    false until it has actually been let go and pressed once more.
+
+    Args:
+        name: A key name, e.g. ``"SPACE"``. Uppercase.
+
+    Raises:
+        TypeError: If ``name`` is not a string.
+        ValueError: If it is not a key TrjoLudus knows.
+    """
+    return active_state().just_pressed(_check_key(name))
+
+
 class KeyboardButtons:
-    """Which keys are down right now.
+    """The old ``keyboard.button`` spelling of :func:`pressed`.
 
-    Reached as ``keyboard.button``::
+    Kept so that games written before the keyboard and the mouse were given
+    the same shape keep working. ``keyboard.pressed("W")`` is the one to
+    write: it matches ``mouse.pressed("LEFT")``, which was never nested.
 
-        if keyboard.button.pressed("W"):
-            player.move.y(-100 * time.delta)
-
-    Both questions are about the present moment. Nothing is consumed by
-    asking, so two calls in the same frame give the same answer, and any
-    number of keys can be asked about every frame -- the state is kept up to
-    date as key events arrive rather than worked out on demand.
+    There is no second implementation here -- these call the module functions.
     """
 
     __slots__ = ()
 
     def pressed(self, name: str) -> bool:
-        """Whether a key is held down right now.
+        """See :func:`trjoludus.keyboard.pressed`."""
+        return pressed(name)
 
-        True from the moment the key goes down until it comes back up, on
-        every frame in between. This is *not* "was it pressed this frame":
-        holding W means ``pressed("W")`` is true the whole time.
-
-        Args:
-            name: A key name, e.g. ``"W"`` or ``"ESCAPE"``. Uppercase.
-
-        Raises:
-            TypeError: If ``name`` is not a string.
-            ValueError: If it is not a key TrjoLudus knows.
-        """
-        return active_state().pressed(_check_key(name))
+    def just_pressed(self, name: str) -> bool:
+        """See :func:`trjoludus.keyboard.just_pressed`."""
+        return just_pressed(name)
 
     def released(self, name: str) -> bool:
-        """Whether a key is *not* being held right now.
+        """Deprecated. Meant "not held", which is not what it sounded like.
 
-        Exactly the opposite of :meth:`pressed`, and current state in the same
-        way: it is true for a key nobody has touched, not only for one just
-        let go of. It exists so that "while this is not held" reads as plainly
-        as its opposite.
+        Every engine a game developer has met uses *released* for the moment a
+        key comes up -- an edge, like :func:`just_pressed` is for going down.
+        This was never that: it answered true for a key nobody had ever
+        touched. Code written to detect a key coming up would have fired
+        continuously, for every key, for ever.
 
-        Raises:
-            TypeError: If ``name`` is not a string.
-            ValueError: If it is not a key TrjoLudus knows.
+        Write ``not keyboard.pressed("W")`` for what this actually did. The
+        name is being kept free for a real release edge.
+
+        .. deprecated::
+            Warns, and will be removed. There is no replacement because
+            ``not pressed(...)`` was always the honest spelling.
         """
-        return not active_state().pressed(_check_key(name))
+        warnings.warn(
+            "keyboard.button.released(name) means 'not held', which is not "
+            "what the name suggests -- it is true for a key nobody has "
+            "touched, not only for one just let go of. Write "
+            "'not keyboard.pressed(name)' instead. The name is reserved for a "
+            "real key-release edge later.",
+            DeprecationWarning, stacklevel=2,
+        )
+        return not pressed(name)
 
     def __repr__(self) -> str:
         return repr(active_state())
 
 
-#: Which keys are held down. See :class:`KeyboardButtons`.
+#: The old spelling of :func:`pressed`. See :class:`KeyboardButtons`.
 button = KeyboardButtons()
 
 
@@ -253,30 +342,42 @@ class KeyValue:
 key = KeyValue()
 
 
-def wait(what) -> None:
-    """Wait for a key press and update :data:`key` with it.
+def wait(what=None) -> "str | None":
+    """Wait for a key press and return which key it was.
+
+    ::
+
+        pressed_key = keyboard.wait()
+
+        if pressed_key == "W":
+            player.move.y(-20)
+
+    Nothing else happens while waiting. The engine keeps handling window
+    events so the window stays responsive and a close request still reaches
+    the game, but no frame is drawn and ``on_update`` is not called again
+    until this returns.
 
     Args:
-        what: :data:`trjoludus.input.key`, the value to update. It is an
-            argument rather than implied so that waiting for other kinds of
-            input can be added later without the call reading differently.
+        what: Nothing. Accepted so that ``keyboard.wait(input.key)``, the way
+            this used to be written, keeps working. There was only ever one
+            legal value, which is why it is not needed.
 
     Returns:
-        Nothing. The result goes into :data:`key`; there is deliberately no
-        value to assign, so there is one way to read the key.
+        The key name, as an ordinary string -- ``"W"``, ``"ESCAPE"``. ``None``
+        if the game asked to stop while waiting, or its last window
+        disappeared, so a stale key cannot be acted on during shutdown.
 
-    If the game asks to stop while waiting, or its last window disappears, the
-    wait ends and :data:`key` becomes ``None`` rather than keeping the
-    previous press, so a stale key cannot be acted on during shutdown.
+        :data:`key` is updated too, for games written before this returned
+        anything. It is a mirror now, not the only way to read the answer.
 
     Raises:
         TrjoLudusError: If called while no game is running, or if ``what`` is
-            not :data:`trjoludus.input.key`.
+            something other than :data:`trjoludus.input.key`.
     """
-    if what is not key:
+    if what is not None and what is not key:
         raise TrjoLudusError(
-            f"keyboard.wait() takes input.key, not {what!r}. It is the only "
-            f"kind of input TrjoLudus can wait for so far."
+            f"keyboard.wait() takes no arguments, and got {what!r}. Write "
+            f"'pressed_key = keyboard.wait()' -- it returns the key."
         )
 
     from trjoludus.app import current_application
@@ -287,4 +388,5 @@ def wait(what) -> None:
             "keyboard.wait() only works while a game is running. Call it from "
             "on_start or on_update, inside a game started with tl.run()."
         )
-    application.wait_for_input(kind="key")
+    taken = application.wait_for_input(kind="key")
+    return None if taken is None else taken.value
