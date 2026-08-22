@@ -855,7 +855,8 @@ class TestThePublicApiIsUnchanged(BackendTestCase):
                 self.assertEqual(module.__all__, ["engine"])
 
     def test_the_written_subsystems_still_offer_what_they_offer(self):
-        self.assertEqual(collision.__all__, ["CollisionError", "collide"])
+        self.assertEqual(collision.__all__,
+                         ["CollisionError", "collide", "colliding"])
 
     def test_image_and_animation_keep_everything_they_had(self):
         self.assertTrue(hasattr(image, "Image"))

@@ -8,8 +8,32 @@ to say, and an engine that guessed would be wrong for most games::
     if objects.collide("player", "zombie"):
         zombie.animation.play("attack")
 
-A game reaches this through :mod:`trjoludus.objects`; the name a game writes
-is ``objects.collide(...)``.
+Two questions, and the second is the first asked of everything at once::
+
+    objects.collide("player", "zombie")   # are these two touching?
+    objects.colliding("player")           # what is this one touching?
+
+A game reaches both through :mod:`trjoludus.objects`.
+
+# What an answer is made of
+
+:func:`colliding` hands back :class:`~trjoludus.scene.GameObject` handles --
+the same thing ``create.image(...)`` returns and the same thing a game already
+holds. There is no new way to refer to an object here, because there does not
+need to be one: what comes back can be used straight away, which is the point
+of asking::
+
+    for enemy in objects.colliding("player"):
+        enemy.animation.play("attack")
+
+A name is one attribute away when a name is what you want
+(``enemy.name``), which is the cheaper direction to travel: getting from a
+name to something you can use would mean looking it up again.
+
+They come back in the order the objects were created -- the scene's own order,
+which is also the order they are drawn in. The same scene answers the same way
+every time, so a loop over the result is never at the mercy of how a set
+happened to hash.
 
 # Boxes, not shapes
 
@@ -53,7 +77,7 @@ import warnings
 from trjoludus.errors import TrjoLudusError, TrjoLudusWarning
 from trjoludus.native import PYTHON, expose
 
-__all__ = ["CollisionError", "collide"]
+__all__ = ["CollisionError", "collide", "colliding"]
 
 #: What a game has asked for. Served by the module's own type, so that reading
 #: it is live and writing something TrjoLudus does not know is refused.
@@ -82,6 +106,23 @@ def bounds(obj) -> tuple:
     return (left, top,
             left + table.width[slot] * scale,
             top + table.height[slot] * scale)
+
+
+def _participates(obj) -> bool:
+    """Whether an object takes part in collision at all.
+
+    Aliveness, and nothing else. Being invisible is not being destroyed -- an
+    object nobody can see is still somewhere, which is what invisible walls
+    are made of -- so what is drawn has no say here.
+
+    Shared by both questions on purpose: one rule about who takes part, asked
+    the same way whether a game names two objects or one.
+    """
+    from trjoludus import engine as engine_state
+
+    if obj.removed:
+        return False
+    return bool(obj._table.flags[obj._slot] & engine_state.ALIVE)
 
 
 def overlap(first, second) -> bool:
@@ -187,15 +228,94 @@ def collide(name_a: str, name_b: str) -> bool:
     # A destroyed object is out of the scene, so it is normally not found at
     # all. This is what makes that a rule rather than a side effect: nothing
     # that is not alive takes part, whether or not anyone still has a handle
-    # on it. Being invisible is not being destroyed -- an object nobody can
-    # see is still somewhere, which is what invisible walls are made of.
-    from trjoludus import engine as engine_state
-
-    for obj in (first, second):
-        if obj.removed or not obj._table.flags[obj._slot] & engine_state.ALIVE:
-            return False
+    # on it.
+    if not _participates(first) or not _participates(second):
+        return False
 
     return overlap(first, second)
+
+
+def _overlapping(subject):
+    """Every live object overlapping ``subject``, except ``subject`` itself.
+
+    Engine-internal, and the only part of answering :func:`colliding` that
+    knows *how* the objects are found. It walks the scene, which is honest
+    about what it costs and is fast enough for the number of objects a game
+    made this way has. Something cleverer -- a grid, a tree, a native pass --
+    would replace this function and nothing else, which is why it is a
+    function.
+
+    Yields in the scene's own order, which is creation order.
+    """
+    from trjoludus.scene import current_scene
+
+    for other in current_scene().objects():
+        # Identity, not name: the object asked about is excluded because it is
+        # that object, not because it is spelled that way.
+        if other is subject:
+            continue
+        if not _participates(other):
+            continue
+        if overlap(subject, other):
+            yield other
+
+
+def colliding(name: str) -> tuple:
+    """Every object overlapping the named one, right now.
+
+    ::
+
+        for enemy in objects.colliding("player"):
+            enemy.animation.play("attack")
+
+    Like :func:`collide`, this answers and does nothing else. Nothing is
+    moved, damaged, destroyed or played; what to do about what is touching
+    the player is yours to write.
+
+    What comes back are :class:`~trjoludus.scene.GameObject` handles -- the
+    same thing ``create.image(...)`` gives you -- so they can be used straight
+    away. Ask one for its ``name`` when a name is what you want::
+
+        names = [enemy.name for enemy in objects.colliding("player")]
+        if "zombie" in names:
+            ...
+
+    They arrive in the order the objects were created, which is the order they
+    are drawn in, and it is the same order every time for the same scene.
+
+    The object asked about is never in its own result: it overlaps itself
+    always, which would make it noise in every loop. That is the same rule
+    :func:`collide` states by refusing, said in the way a list can say it.
+
+    Nothing is remembered between calls. Move something and ask again and the
+    answer has moved with it, because the answer is worked out from where
+    things are now.
+
+    Args:
+        name: The name of the object to ask about.
+
+    Returns:
+        A tuple of handles, empty if nothing is touching it -- and empty, with
+        a warning naming it, if there is no such object.
+
+    Raises:
+        TypeError: If ``name`` is not a string.
+    """
+    from trjoludus.scene import GameObject
+
+    if not isinstance(name, str):
+        raise TypeError(
+            f"a game object name must be a string, got {type(name).__name__}"
+        )
+
+    subject = _find(name)
+    if subject is None or not _participates(subject):
+        return ()
+
+    # One handle per object, because the scene holds one object per name and
+    # each is walked once. Built here rather than kept anywhere: a handle is a
+    # way of reaching an object, not a record of what was touching what.
+    return tuple(GameObject(found.name) for found in _overlapping(subject))
 
 
 expose(__name__, recommends=PYTHON,

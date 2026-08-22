@@ -16,8 +16,9 @@ Python you write, with the native implementation details kept out of the way.
 > and which one was clicked. Rendering and PNG decoding have native
 > implementations; everything runs in Python without them. Verified on
 > Linux/X11. A Windows backend exists but is **not verified on Windows**.
-> Objects can be asked whether they are overlapping. Sound, physics, saving
-> and public multi-window support are not implemented.
+> Objects can be asked whether they are overlapping, and what any one of them
+> is touching. Sound, physics, saving and public multi-window support are not
+> implemented.
 
 ## Philosophy
 
@@ -68,7 +69,7 @@ trjoludus/
     keyboard.py        waiting for key presses
     time.py            waiting, frame delta and frame rate
     animation.py       named frame sequences and how they play
-    collision.py       whether two objects overlap
+    collision.py       whether objects overlap, and what a thing is touching
     objects.py         questions a game asks about its objects
     rendering.py       the rendering subsystem's backend choice
     collision.py       ) subsystems with no implementation yet: each exists
@@ -657,6 +658,64 @@ boundary.visible = False           # can't be seen, still stops the player
 old_wall.destroy()                 # gone; collides with nothing
 ```
 
+### Asking what is touching something
+
+`objects.collide` asks about two objects. `objects.colliding` asks about one,
+and tells you everything it is touching:
+
+```python
+for enemy in objects.colliding("player"):
+    print(enemy)
+```
+
+```text
+GameObject('zombie')
+GameObject('spike')
+```
+
+What comes back are **game objects** -- the same thing `create.image(...)`
+gives you -- so you can use them straight away:
+
+```python
+for enemy in objects.colliding("player"):
+    enemy.animation.play("attack")
+    health -= 25
+```
+
+That is the whole idea again: TrjoLudus finds them, and you decide what
+happens to them.
+
+Ask an object for its `name` when a name is what you want:
+
+```python
+touching = [enemy.name for enemy in objects.colliding("player")]
+
+if "zombie" in touching:
+    player.animation.play("take_damage")
+```
+
+They come back in the order the objects were created, which is the order they
+are drawn in. It is the same order every time, so a loop over the result is
+never in a surprising order.
+
+An object is never in its own result -- it is always touching itself, so it
+would only ever be noise. Everything else works the way `collide` does: things
+that merely touch are not included, invisible objects are, destroyed objects
+are not, and nothing is remembered between calls:
+
+```python
+objects.colliding("player")     # (GameObject('zombie'),)
+player.move.x(500)
+objects.colliding("player")     # ()  -- worked out again, from where it is now
+```
+
+A name that does not exist gives you an empty result and the same warning
+`collide` gives:
+
+```python
+objects.colliding("plyer")      # (), and warns about 'plyer'
+```
+
 If you name an object that does not exist, you get `False` and a warning
 saying which name it was -- a typo should be easy to find, not silent:
 
@@ -965,7 +1024,7 @@ considered much later.
 | 3.1 | Native rendering | done (Linux x86-64; other platforms unverified) |
 | 3.2 | Native PNG unfiltering and opacity scan | done (Linux x86-64; other platforms unverified) |
 | 3.3 | Architecture cleanup: bulk world passes, result convention | done |
-| 4 | Collision | in progress -- `objects.collide` in Python |
+| 4 | Collision | in progress -- `objects.collide` and `objects.colliding` in Python |
 | 5 | Audio | planned -- Python first |
 | 6 | Asset management | planned |
 | 7 | Save systems | planned |
